@@ -617,6 +617,14 @@ function buildSettings(): void {
   settingsPage.append(previewCard);
   updatePreview();
 
+  // Safety net: keep the preview in sync even if a control's own handler misses
+  // an event (IME commits, browser autofill, host re-render).
+  if (settingsPage.dataset.previewBound !== '1') {
+    settingsPage.dataset.previewBound = '1';
+    settingsPage.addEventListener('input', () => updatePreview(), true);
+    settingsPage.addEventListener('change', () => updatePreview(), true);
+  }
+
   const saveRow = el('div', 'save-row');
   saveHandle = mountButton(saveRow, {
     label: '保存',

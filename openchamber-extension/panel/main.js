@@ -2553,6 +2553,11 @@ ${GUEST_UI_LOOK_CSS}`;
     previewCard.append(previewBody, settingsNote("\u5B9E\u9645\u6CE8\u5165\u65F6\u6309\u5404\u6BB5\u6240\u9009 agent \u8FC7\u6EE4\uFF1B\u8FD9\u662F\u5408\u5E76\u540E\u7684\u6837\u5B50\u3002"));
     settingsPage.append(previewCard);
     updatePreview();
+    if (settingsPage.dataset.previewBound !== "1") {
+      settingsPage.dataset.previewBound = "1";
+      settingsPage.addEventListener("input", () => updatePreview(), true);
+      settingsPage.addEventListener("change", () => updatePreview(), true);
+    }
     const saveRow = el2("div", "save-row");
     saveHandle = mountButton(saveRow, {
       label: "\u4FDD\u5B58",
