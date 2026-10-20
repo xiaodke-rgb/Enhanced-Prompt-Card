@@ -1,0 +1,24 @@
+{
+  "version": 2,
+  "enabled": true,
+  "first": {
+    "enabled": true,
+    "agents": [
+      "plan",
+      "build"
+    ],
+    "text": "[系统提醒(非用户问题)] 先判意图：ANSWER 直接答；SEARCH/READ 确需才查；DO 明确要求才做，问句不算；不明确按上下文补全，仍不唯一就问，不动手。"
+  },
+  "step": {
+    "enabled": true,
+    "agents": [
+      "plan",
+      "build"
+    ],
+    "text": "[纪律提醒(非用户问题)] 先结论，默认简洁回答，不复述，不铺垫；用户要求详细时除外。"
+  },
+  "logging": {
+    "enabled": true,
+    "path": "~/.config/opencode/enhanced-prompt-card-events.jsonl"
+  }
+}
