@@ -24,6 +24,11 @@ const TURN_TTL_MS = 10 * 60_000
 
 const LEGACY_MARKERS = ["[本轮提醒]", "[本轮意图]"]
 
+// OpenCode projects a compaction summary into a plain `role: "user"` message
+// whose content starts with this tag. It is not a prompt and carries its own ID,
+// so it must never be overlaid or mistaken for a new turn.
+const CHECKPOINT_PREFIX = "<conversation-checkpoint>"
+
 type Part = {
   enabled: boolean
   agents: string[]
@@ -147,7 +152,8 @@ function contentText(message: any): string {
 function isSynthetic(message: any): boolean {
   if (message?.synthetic === true) return true
   if (String(message?.type || "") === "synthetic") return true
-  return contentText(message).trimStart().startsWith("<system-reminder>")
+  const text = contentText(message).trimStart()
+  return text.startsWith("<system-reminder>") || text.startsWith(CHECKPOINT_PREFIX)
 }
 
 function isInjectedPart(part: any, snippets: string[]): boolean {
@@ -299,6 +305,11 @@ async function onContext(ctx: any, event: any): Promise<void> {
 
     const userIndex = findCurrentUserIndex(messages)
     if (userIndex < 0) return
+
+    // A compaction checkpoint is projected as a plain user message with its own
+    // ID. Skip it entirely: injecting here reads as a brand-new question and
+    // breaks the continuity of the turn being compacted.
+    if (isSynthetic(messages[userIndex])) return
 
     const currentID = String(messages[userIndex]?.id || "")
     const state = turns.get(sessionID)
