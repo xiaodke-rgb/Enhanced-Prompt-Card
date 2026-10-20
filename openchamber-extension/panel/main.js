@@ -2327,10 +2327,16 @@ ${GUEST_UI_LOOK_CSS}`;
     }
     recentEl.append(eventTable(recent));
   }
+  function previewValues() {
+    const areas = settingsPage ? Array.from(settingsPage.querySelectorAll("textarea")) : [];
+    const read = (index, key) => areas[index] ? areas[index].value : draft[key].text;
+    return { first: read(0, "first").trim(), step: read(1, "step").trim() };
+  }
   function previewText() {
     if (!draft.enabled) return "\u63D2\u4EF6\u5DF2\u5173\u95ED\uFF1A\u4E0D\u62E6\u622A\u3001\u4E0D\u6CE8\u5165\u3002";
-    const first = draft.first.enabled ? draft.first.text.trim() : "";
-    const step = draft.step.enabled ? draft.step.text.trim() : "";
+    const values = previewValues();
+    const first = draft.first.enabled ? values.first : "";
+    const step = draft.step.enabled ? values.step : "";
     if (!first && !step) return "\u4E24\u6BB5\u90FD\u4E3A\u7A7A\uFF1A\u4E0D\u6CE8\u5165\u4EFB\u4F55\u5185\u5BB9\uFF0C\u6D88\u606F\u539F\u6837\u53D1\u9001\u3002";
     const firstCall = [first, step].filter(Boolean).join("\n");
     return [
@@ -2771,5 +2777,8 @@ ${GUEST_UI_LOOK_CSS}`;
     setInterval(() => {
       if (!document.hidden && built) void refreshEvents();
     }, POLL_MS);
+    setInterval(() => {
+      if (!document.hidden && built && tab === "settings") updatePreview();
+    }, 400);
   }
 })();

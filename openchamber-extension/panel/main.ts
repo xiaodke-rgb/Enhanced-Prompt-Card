@@ -364,10 +364,20 @@ function renderOverview(): void {
   recentEl.append(eventTable(recent));
 }
 
+function previewValues(): { first: string; step: string } {
+  // Read the live textarea values, not only the draft: the preview must mirror
+  // what is on screen even when a host re-render or IME path skips onChange.
+  const areas = settingsPage ? Array.from(settingsPage.querySelectorAll('textarea')) : []
+  const read = (index: number, key: 'first' | 'step'): string =>
+    areas[index] ? areas[index].value : draft[key].text
+  return { first: read(0, 'first').trim(), step: read(1, 'step').trim() }
+}
+
 function previewText(): string {
   if (!draft.enabled) return '插件已关闭：不拦截、不注入。';
-  const first = draft.first.enabled ? draft.first.text.trim() : '';
-  const step = draft.step.enabled ? draft.step.text.trim() : '';
+  const values = previewValues();
+  const first = draft.first.enabled ? values.first : '';
+  const step = draft.step.enabled ? values.step : '';
   if (!first && !step) return '两段都为空：不注入任何内容，消息原样发送。';
   const firstCall = [first, step].filter(Boolean).join('\n');
   return [
@@ -872,4 +882,8 @@ if (MOCK) {
   setInterval(() => {
     if (!document.hidden && built) void refreshEvents();
   }, POLL_MS);
+  // The preview must never lag behind the visible inputs.
+  setInterval(() => {
+    if (!document.hidden && built && tab === 'settings') updatePreview();
+  }, 400);
 }
