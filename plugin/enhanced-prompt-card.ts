@@ -313,25 +313,14 @@ async function onContext(ctx: any, event: any): Promise<void> {
 
     const currentID = String(messages[userIndex]?.id || "")
     const state = turns.get(sessionID)
-    let isFirst = false
 
-    if (state) {
-      if (state.firstPending && Date.now() - state.ts <= TURN_TTL_MS) {
-        isFirst = true
-      } else if (
-        roleOf(last) === "user" &&
-        state.messageID &&
-        currentID &&
-        state.messageID !== currentID
-      ) {
-        // The prompt hook was missed (plugin reloaded mid-turn, or another
-        // client sent the prompt): a different user message means a new turn.
-        isFirst = true
-      }
-    } else if (roleOf(last) === "user") {
-      // No state at all and the call starts a turn: treat it as the first call.
-      isFirst = true
-    }
+    // The only user message allowed to receive reminders is the one the prompt
+    // hook registered for this turn. A different ID means a compaction summary
+    // (whatever format the model produced) or a prompt this process never saw:
+    // stay out of it instead of mistaking it for a new question.
+    if (!state || !state.messageID || !currentID || state.messageID !== currentID) return
+
+    const isFirst = state.firstPending && Date.now() - state.ts <= TURN_TTL_MS
 
     const firstText = partText(cfg.first, agent)
     const stepText = partText(cfg.step, agent)
