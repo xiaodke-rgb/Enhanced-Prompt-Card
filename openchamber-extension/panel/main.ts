@@ -26,11 +26,7 @@ const EVENTS_PATH = '~/.config/opencode/enhanced-prompt-card-events.jsonl';
 const AGENTS_DIR = '~/.config/opencode/agents';
 const POLL_MS = 5000;
 
-const DEFAULT_AGENTS = ['plan', 'build'];
-const DEFAULT_FIRST =
-  '[系统提醒(非用户问题)] 先判意图：ANSWER 直接答；SEARCH/READ 确需才查；DO 明确要求才做，问句不算；不明确按上下文补全，仍不唯一就问，不动手。';
-const DEFAULT_STEP =
-  '[纪律提醒(非用户问题)] 先结论，默认简洁回答，不复述，不铺垫；用户要求详细时除外。';
+const KNOWN_AGENTS = ['plan', 'build'];
 
 type TabId = 'overview' | 'settings' | 'diagnostics';
 
@@ -59,8 +55,8 @@ const root = document.querySelector('#root') as HTMLElement;
 let built = false;
 let booting = false;
 let tab: TabId = 'overview';
-let config: Config = cloneConfig(defaultConfig());
-let draft: Config = cloneConfig(defaultConfig());
+let config: Config = cloneConfig(emptyConfig());
+let draft: Config = cloneConfig(emptyConfig());
 let dirty = false;
 let events: EventRow[] = [];
 let allAgents: string[] = [];
@@ -105,13 +101,15 @@ const el = <K extends keyof HTMLElementTagNameMap>(
   return node;
 };
 
-function defaultConfig(): Config {
+// The panel carries no canned prompt text either: whatever sits in the config
+// file is shown and saved verbatim. A missing file starts empty, not defaulted.
+function emptyConfig(): Config {
   return {
     version: 2,
-    enabled: true,
-    first: { enabled: true, agents: [...DEFAULT_AGENTS], text: DEFAULT_FIRST },
-    step: { enabled: true, agents: [...DEFAULT_AGENTS], text: DEFAULT_STEP },
-    logging: { enabled: true, path: EVENTS_PATH },
+    enabled: false,
+    first: { enabled: false, agents: [], text: '' },
+    step: { enabled: false, agents: [], text: '' },
+    logging: { enabled: false, path: EVENTS_PATH },
   };
 }
 
@@ -138,28 +136,27 @@ function splitNames(value: string): string[] {
     .filter(Boolean);
 }
 
-function normalizePart(raw: unknown, fallback: Part): Part {
-  const next: Part = { enabled: fallback.enabled, agents: [...fallback.agents], text: fallback.text };
+function normalizePart(raw: unknown): Part {
+  const next: Part = { enabled: false, agents: [], text: '' };
   if (!raw || typeof raw !== 'object') return next;
   const value = raw as Record<string, unknown>;
-  if (typeof value.enabled === 'boolean') next.enabled = value.enabled;
-  // Presence of the array is meaningful: [] means "no agent", not "default".
+  next.enabled = value.enabled === true;
   if (Array.isArray(value.agents)) next.agents = normalizeNames(value.agents);
   if (typeof value.text === 'string') next.text = value.text.trim();
   return next;
 }
 
 function normalizeConfig(raw: unknown): Config {
-  const next = defaultConfig();
+  const next = emptyConfig();
   if (!raw || typeof raw !== 'object') return next;
   const value = raw as Record<string, unknown>;
-  if (typeof value.enabled === 'boolean') next.enabled = value.enabled;
-  next.first = normalizePart(value.first, next.first);
-  next.step = normalizePart(value.step, next.step);
+  next.enabled = value.enabled === true;
+  next.first = normalizePart(value.first);
+  next.step = normalizePart(value.step);
   const logging = value.logging as Record<string, unknown> | undefined;
   if (logging && typeof logging === 'object') {
-    if (typeof logging.enabled === 'boolean') next.logging.enabled = logging.enabled;
-    if (typeof logging.path === 'string' && logging.path.startsWith('~/')) next.logging.path = logging.path;
+    next.logging.enabled = logging.enabled === true;
+    if (typeof logging.path === 'string') next.logging.path = logging.path;
   }
   return next;
 }
@@ -177,13 +174,14 @@ async function loadConfig(): Promise<void> {
   const raw = await readText(CONFIG_PATH);
   configError = '';
   if (raw == null) {
-    config = defaultConfig();
+    config = emptyConfig();
+    configError = '配置文件不存在：插件当前不注入任何内容，保存后创建。';
   } else {
     try {
       config = normalizeConfig(JSON.parse(raw) as unknown);
     } catch (err) {
-      config = defaultConfig();
-      configError = `配置解析失败，使用默认值：${err instanceof Error ? err.message : String(err)}`;
+      config = emptyConfig();
+      configError = `配置解析失败，未注入任何内容：${err instanceof Error ? err.message : String(err)}`;
     }
   }
   if (!dirty) draft = cloneConfig(config);
@@ -191,7 +189,7 @@ async function loadConfig(): Promise<void> {
 
 async function loadAgents(): Promise<void> {
   const set = new Set<string>([
-    ...DEFAULT_AGENTS,
+    ...KNOWN_AGENTS,
     ...config.first.agents,
     ...config.step.agents,
     ...draft.first.agents,
@@ -468,7 +466,6 @@ function buildPartCard(
   title: string,
   badge: string,
   description: string,
-  fallbackText: string,
 ): HTMLElement {
   const part = draft[key];
   const card = el('div', 'settings-card');
@@ -510,7 +507,7 @@ function buildPartCard(
     value: part.text,
     multiline: true,
     rows: 4,
-    placeholder: fallbackText,
+    placeholder: '输入这段要注入的文本',
     onChange: (value) => {
       part.text = value;
       markDirty();
@@ -520,17 +517,6 @@ function buildPartCard(
 
   const actions = el('div', 'diag-actions');
   body.append(actions);
-  mountButton(actions, {
-    label: '恢复默认',
-    size: 'sm',
-    variant: 'outline',
-    onClick: () => {
-      part.text = fallbackText;
-      field.update({ value: fallbackText });
-      markDirty();
-      updatePreview();
-    },
-  });
   mountButton(actions, {
     label: '清空文本',
     size: 'sm',
@@ -579,7 +565,6 @@ function buildSettings(): void {
       '每轮首次注入',
       '每轮第一次',
       '只在本轮第一次模型调用时追加，排在每步注入前面；文本为空就不加这一段。',
-      DEFAULT_FIRST,
     ),
   );
 
@@ -589,7 +574,6 @@ function buildSettings(): void {
       '每步注入',
       '每次模型调用',
       '用户提问那一步和之后每次工具调用都追加；文本为空就不加这一段。',
-      DEFAULT_STEP,
     ),
   );
 
@@ -851,9 +835,9 @@ async function bootMock(): Promise<void> {
   })) {
     document.documentElement.style.setProperty(name, value);
   }
-  config = defaultConfig();
+  config = emptyConfig();
   draft = cloneConfig(config);
-  allAgents = [...new Set([...DEFAULT_AGENTS, 'general', 'explore'])].sort((a, b) => a.localeCompare(b));
+  allAgents = [...new Set([...KNOWN_AGENTS, 'general', 'explore'])].sort((a, b) => a.localeCompare(b));
   baseAgents = [...allAgents];
   const now = Date.now();
   const session = 'ses_3e342829-9df5-4bda-b5d0-428ada3ab8b8';

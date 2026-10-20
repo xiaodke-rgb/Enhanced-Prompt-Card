@@ -18,18 +18,9 @@ import { homedir } from "node:os"
 import { dirname, join } from "node:path"
 
 const CONFIG_PATH = join(homedir(), ".config/opencode/enhanced-prompt-card.json")
-const DEFAULT_LOG_PATH = join(homedir(), ".config/opencode/enhanced-prompt-card-events.jsonl")
 
 const SESSION_TTL_MS = 60_000
 const TURN_TTL_MS = 10 * 60_000
-
-const DEFAULT_AGENTS = ["plan", "build"]
-
-const DEFAULT_FIRST =
-  "[系统提醒(非用户问题)] 先判意图：ANSWER 直接答；SEARCH/READ 确需才查；DO 明确要求才做，问句不算；不明确按上下文补全，仍不唯一就问，不动手。"
-
-const DEFAULT_STEP =
-  "[纪律提醒(非用户问题)] 先结论，默认简洁回答，不复述，不铺垫；用户要求详细时除外。"
 
 const LEGACY_MARKERS = ["[本轮提醒]", "[本轮意图]"]
 
@@ -55,15 +46,17 @@ type TurnState = {
 const turns = new Map<string, TurnState>()
 const sessionCache = new Map<string, { main: boolean; agent: string; ts: number }>()
 
-let configCache: Config = baseConfig()
+let configCache: Config = emptyConfig()
 let configMtime = -1
 
-function baseConfig(): Config {
+// No built-in content. The config file is the only source: a missing or broken
+// file means "inject nothing", never a silent fallback to hardcoded text.
+function emptyConfig(): Config {
   return {
-    enabled: true,
-    first: { enabled: true, agents: [...DEFAULT_AGENTS], text: DEFAULT_FIRST },
-    step: { enabled: true, agents: [...DEFAULT_AGENTS], text: DEFAULT_STEP },
-    logging: { enabled: true, path: DEFAULT_LOG_PATH },
+    enabled: false,
+    first: { enabled: false, agents: [], text: "" },
+    step: { enabled: false, agents: [], text: "" },
+    logging: { enabled: false, path: "" },
   }
 }
 
@@ -79,34 +72,26 @@ function normalizeAgents(value: any): string[] {
   return out
 }
 
-function normalizePart(raw: any, fallback: Part): Part {
-  const next: Part = {
-    enabled: fallback.enabled,
-    agents: [...fallback.agents],
-    text: fallback.text,
-  }
-  if (!raw || typeof raw !== "object") return next
-  if (typeof raw.enabled === "boolean") next.enabled = raw.enabled
-  // Presence of the array is meaningful: [] means "no agent at all", which must
-  // not silently fall back to the default scope.
-  if (Array.isArray(raw.agents)) next.agents = normalizeAgents(raw.agents)
-  if (typeof raw.text === "string") next.text = raw.text.trim()
-  return next
+function normalizePart(raw: any): Part {
+  const part: Part = { enabled: false, agents: [], text: "" }
+  if (!raw || typeof raw !== "object") return part
+  part.enabled = raw.enabled === true
+  part.agents = normalizeAgents(raw.agents)
+  part.text = typeof raw.text === "string" ? raw.text.trim() : ""
+  return part
 }
 
 function normalizeConfig(raw: any): Config {
-  const next = baseConfig()
-  if (!raw || typeof raw !== "object") return next
-  if (typeof raw.enabled === "boolean") next.enabled = raw.enabled
-  next.first = normalizePart(raw.first, next.first)
-  next.step = normalizePart(raw.step, next.step)
+  const cfg = emptyConfig()
+  if (!raw || typeof raw !== "object") return cfg
+  cfg.enabled = raw.enabled === true
+  cfg.first = normalizePart(raw.first)
+  cfg.step = normalizePart(raw.step)
   if (raw.logging && typeof raw.logging === "object") {
-    if (typeof raw.logging.enabled === "boolean") next.logging.enabled = raw.logging.enabled
-    if (typeof raw.logging.path === "string" && raw.logging.path.startsWith("~/")) {
-      next.logging.path = raw.logging.path
-    }
+    cfg.logging.enabled = raw.logging.enabled === true
+    cfg.logging.path = typeof raw.logging.path === "string" ? raw.logging.path : ""
   }
-  return next
+  return cfg
 }
 
 function loadConfig(): Config {
@@ -118,8 +103,8 @@ function loadConfig(): Config {
     }
     return configCache
   } catch {
-    // Missing or unreadable file: use defaults, not the last broken config.
-    configCache = baseConfig()
+    // Missing or unreadable file: nothing to inject.
+    configCache = emptyConfig()
     configMtime = -1
     return configCache
   }

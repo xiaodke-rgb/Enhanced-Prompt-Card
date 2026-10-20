@@ -33,7 +33,7 @@ openchamber-extension/         OpenChamber 面板扩展（设置 + 诊断）
 cp plugin/enhanced-prompt-card.ts ~/.config/opencode/plugins/
 ```
 
-配置文件（可选，缺省用内置默认）：
+配置文件（必填，插件与面板都不内置任何默认文本）：
 
 ```bash
 cp plugin/enhanced-prompt-card.example.json ~/.config/opencode/enhanced-prompt-card.json
@@ -49,7 +49,7 @@ cp plugin/enhanced-prompt-card.example.json ~/.config/opencode/enhanced-prompt-c
 }
 ```
 
-配置按 mtime 热加载，改完下一轮生效，无需重启。
+插件只读这个文件：文件缺失或解析失败时不注入任何内容，不会用代码里的默认值顶替。配置按 mtime 热加载，改完下一轮生效，无需重启。
 
 ## 安装面板扩展
 
@@ -67,7 +67,7 @@ npm run build
 面板提供：
 
 - 概览：今日轮次、首次/每步注入率、错误数、最近轮次表
-- 设置：总开关、两段各自的开关 / agent 多选 / 文本 / 恢复默认、日志开关、拼接预览
+- 设置：总开关、两段各自的开关 / agent 多选 / 文本、日志开关、拼接预览
 - 诊断：最近事件表（时间 / agent / 会话 / 注入 / 错误）、刷新、复制 JSONL、清空
 
 概览显示今天最近 8 条，诊断最多显示 300 条。

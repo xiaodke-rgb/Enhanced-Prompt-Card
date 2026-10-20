@@ -2056,16 +2056,14 @@ ${GUEST_UI_LOOK_CSS}`;
   var EVENTS_PATH = "~/.config/opencode/enhanced-prompt-card-events.jsonl";
   var AGENTS_DIR = "~/.config/opencode/agents";
   var POLL_MS = 5e3;
-  var DEFAULT_AGENTS = ["plan", "build"];
-  var DEFAULT_FIRST = "[\u7CFB\u7EDF\u63D0\u9192(\u975E\u7528\u6237\u95EE\u9898)] \u5148\u5224\u610F\u56FE\uFF1AANSWER \u76F4\u63A5\u7B54\uFF1BSEARCH/READ \u786E\u9700\u624D\u67E5\uFF1BDO \u660E\u786E\u8981\u6C42\u624D\u505A\uFF0C\u95EE\u53E5\u4E0D\u7B97\uFF1B\u4E0D\u660E\u786E\u6309\u4E0A\u4E0B\u6587\u8865\u5168\uFF0C\u4ECD\u4E0D\u552F\u4E00\u5C31\u95EE\uFF0C\u4E0D\u52A8\u624B\u3002";
-  var DEFAULT_STEP = "[\u7EAA\u5F8B\u63D0\u9192(\u975E\u7528\u6237\u95EE\u9898)] \u5148\u7ED3\u8BBA\uFF0C\u9ED8\u8BA4\u7B80\u6D01\u56DE\u7B54\uFF0C\u4E0D\u590D\u8FF0\uFF0C\u4E0D\u94FA\u57AB\uFF1B\u7528\u6237\u8981\u6C42\u8BE6\u7EC6\u65F6\u9664\u5916\u3002";
+  var KNOWN_AGENTS = ["plan", "build"];
   var host = connectHost();
   var root = document.querySelector("#root");
   var built = false;
   var booting = false;
   var tab = "overview";
-  var config = cloneConfig(defaultConfig());
-  var draft = cloneConfig(defaultConfig());
+  var config = cloneConfig(emptyConfig());
+  var draft = cloneConfig(emptyConfig());
   var dirty = false;
   var events = [];
   var allAgents = [];
@@ -2102,13 +2100,13 @@ ${GUEST_UI_LOOK_CSS}`;
     if (text !== void 0) node.textContent = text;
     return node;
   };
-  function defaultConfig() {
+  function emptyConfig() {
     return {
       version: 2,
-      enabled: true,
-      first: { enabled: true, agents: [...DEFAULT_AGENTS], text: DEFAULT_FIRST },
-      step: { enabled: true, agents: [...DEFAULT_AGENTS], text: DEFAULT_STEP },
-      logging: { enabled: true, path: EVENTS_PATH }
+      enabled: false,
+      first: { enabled: false, agents: [], text: "" },
+      step: { enabled: false, agents: [], text: "" },
+      logging: { enabled: false, path: EVENTS_PATH }
     };
   }
   function cloneConfig(value) {
@@ -2128,26 +2126,26 @@ ${GUEST_UI_LOOK_CSS}`;
   function splitNames(value) {
     return String(value || "").split(/[,，、\s]+/).map((name) => name.trim()).filter(Boolean);
   }
-  function normalizePart(raw, fallback) {
-    const next = { enabled: fallback.enabled, agents: [...fallback.agents], text: fallback.text };
+  function normalizePart(raw) {
+    const next = { enabled: false, agents: [], text: "" };
     if (!raw || typeof raw !== "object") return next;
     const value = raw;
-    if (typeof value.enabled === "boolean") next.enabled = value.enabled;
+    next.enabled = value.enabled === true;
     if (Array.isArray(value.agents)) next.agents = normalizeNames(value.agents);
     if (typeof value.text === "string") next.text = value.text.trim();
     return next;
   }
   function normalizeConfig(raw) {
-    const next = defaultConfig();
+    const next = emptyConfig();
     if (!raw || typeof raw !== "object") return next;
     const value = raw;
-    if (typeof value.enabled === "boolean") next.enabled = value.enabled;
-    next.first = normalizePart(value.first, next.first);
-    next.step = normalizePart(value.step, next.step);
+    next.enabled = value.enabled === true;
+    next.first = normalizePart(value.first);
+    next.step = normalizePart(value.step);
     const logging = value.logging;
     if (logging && typeof logging === "object") {
-      if (typeof logging.enabled === "boolean") next.logging.enabled = logging.enabled;
-      if (typeof logging.path === "string" && logging.path.startsWith("~/")) next.logging.path = logging.path;
+      next.logging.enabled = logging.enabled === true;
+      if (typeof logging.path === "string") next.logging.path = logging.path;
     }
     return next;
   }
@@ -2163,20 +2161,21 @@ ${GUEST_UI_LOOK_CSS}`;
     const raw = await readText(CONFIG_PATH);
     configError = "";
     if (raw == null) {
-      config = defaultConfig();
+      config = emptyConfig();
+      configError = "\u914D\u7F6E\u6587\u4EF6\u4E0D\u5B58\u5728\uFF1A\u63D2\u4EF6\u5F53\u524D\u4E0D\u6CE8\u5165\u4EFB\u4F55\u5185\u5BB9\uFF0C\u4FDD\u5B58\u540E\u521B\u5EFA\u3002";
     } else {
       try {
         config = normalizeConfig(JSON.parse(raw));
       } catch (err) {
-        config = defaultConfig();
-        configError = `\u914D\u7F6E\u89E3\u6790\u5931\u8D25\uFF0C\u4F7F\u7528\u9ED8\u8BA4\u503C\uFF1A${err instanceof Error ? err.message : String(err)}`;
+        config = emptyConfig();
+        configError = `\u914D\u7F6E\u89E3\u6790\u5931\u8D25\uFF0C\u672A\u6CE8\u5165\u4EFB\u4F55\u5185\u5BB9\uFF1A${err instanceof Error ? err.message : String(err)}`;
       }
     }
     if (!dirty) draft = cloneConfig(config);
   }
   async function loadAgents() {
     const set = /* @__PURE__ */ new Set([
-      ...DEFAULT_AGENTS,
+      ...KNOWN_AGENTS,
       ...config.first.agents,
       ...config.step.agents,
       ...draft.first.agents,
@@ -2416,7 +2415,7 @@ ${GUEST_UI_LOOK_CSS}`;
       }
     });
   }
-  function buildPartCard(key, title, badge, description, fallbackText) {
+  function buildPartCard(key, title, badge, description) {
     const part = draft[key];
     const card = el2("div", "settings-card");
     card.append(sectionHead(title, badge, "green"));
@@ -2453,7 +2452,7 @@ ${GUEST_UI_LOOK_CSS}`;
       value: part.text,
       multiline: true,
       rows: 4,
-      placeholder: fallbackText,
+      placeholder: "\u8F93\u5165\u8FD9\u6BB5\u8981\u6CE8\u5165\u7684\u6587\u672C",
       onChange: (value) => {
         part.text = value;
         markDirty();
@@ -2462,17 +2461,6 @@ ${GUEST_UI_LOOK_CSS}`;
     });
     const actions = el2("div", "diag-actions");
     body.append(actions);
-    mountButton(actions, {
-      label: "\u6062\u590D\u9ED8\u8BA4",
-      size: "sm",
-      variant: "outline",
-      onClick: () => {
-        part.text = fallbackText;
-        field.update({ value: fallbackText });
-        markDirty();
-        updatePreview();
-      }
-    });
     mountButton(actions, {
       label: "\u6E05\u7A7A\u6587\u672C",
       size: "sm",
@@ -2515,8 +2503,7 @@ ${GUEST_UI_LOOK_CSS}`;
         "first",
         "\u6BCF\u8F6E\u9996\u6B21\u6CE8\u5165",
         "\u6BCF\u8F6E\u7B2C\u4E00\u6B21",
-        "\u53EA\u5728\u672C\u8F6E\u7B2C\u4E00\u6B21\u6A21\u578B\u8C03\u7528\u65F6\u8FFD\u52A0\uFF0C\u6392\u5728\u6BCF\u6B65\u6CE8\u5165\u524D\u9762\uFF1B\u6587\u672C\u4E3A\u7A7A\u5C31\u4E0D\u52A0\u8FD9\u4E00\u6BB5\u3002",
-        DEFAULT_FIRST
+        "\u53EA\u5728\u672C\u8F6E\u7B2C\u4E00\u6B21\u6A21\u578B\u8C03\u7528\u65F6\u8FFD\u52A0\uFF0C\u6392\u5728\u6BCF\u6B65\u6CE8\u5165\u524D\u9762\uFF1B\u6587\u672C\u4E3A\u7A7A\u5C31\u4E0D\u52A0\u8FD9\u4E00\u6BB5\u3002"
       )
     );
     settingsPage.append(
@@ -2524,8 +2511,7 @@ ${GUEST_UI_LOOK_CSS}`;
         "step",
         "\u6BCF\u6B65\u6CE8\u5165",
         "\u6BCF\u6B21\u6A21\u578B\u8C03\u7528",
-        "\u7528\u6237\u63D0\u95EE\u90A3\u4E00\u6B65\u548C\u4E4B\u540E\u6BCF\u6B21\u5DE5\u5177\u8C03\u7528\u90FD\u8FFD\u52A0\uFF1B\u6587\u672C\u4E3A\u7A7A\u5C31\u4E0D\u52A0\u8FD9\u4E00\u6BB5\u3002",
-        DEFAULT_STEP
+        "\u7528\u6237\u63D0\u95EE\u90A3\u4E00\u6B65\u548C\u4E4B\u540E\u6BCF\u6B21\u5DE5\u5177\u8C03\u7528\u90FD\u8FFD\u52A0\uFF1B\u6587\u672C\u4E3A\u7A7A\u5C31\u4E0D\u52A0\u8FD9\u4E00\u6BB5\u3002"
       )
     );
     const logCard = el2("div", "settings-card");
@@ -2747,9 +2733,9 @@ ${GUEST_UI_LOOK_CSS}`;
     })) {
       document.documentElement.style.setProperty(name, value);
     }
-    config = defaultConfig();
+    config = emptyConfig();
     draft = cloneConfig(config);
-    allAgents = [.../* @__PURE__ */ new Set([...DEFAULT_AGENTS, "general", "explore"])].sort((a, b) => a.localeCompare(b));
+    allAgents = [.../* @__PURE__ */ new Set([...KNOWN_AGENTS, "general", "explore"])].sort((a, b) => a.localeCompare(b));
     baseAgents = [...allAgents];
     const now = Date.now();
     const session = "ses_3e342829-9df5-4bda-b5d0-428ada3ab8b8";
