@@ -85,3 +85,5 @@ npm run build
 ## License
 
 MIT
+
+> After updating the plugin code, restart OpenCode once to load it. Editing `enhanced-prompt-card.json` alone needs no restart: the plugin reloads it by mtime.

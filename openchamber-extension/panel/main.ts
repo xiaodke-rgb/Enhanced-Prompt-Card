@@ -109,7 +109,7 @@ function emptyConfig(): Config {
     enabled: false,
     first: { enabled: false, agents: [], text: '' },
     step: { enabled: false, agents: [], text: '' },
-    logging: { enabled: false, path: EVENTS_PATH },
+    logging: { enabled: false, path: '' },
   };
 }
 
@@ -273,6 +273,7 @@ function markDirty(): void {
   dirty = true;
   saveHandle?.update({ disabled: false });
   if (saveStateEl) saveStateEl.textContent = '有未保存更改';
+  scheduleAutoSave();
 }
 
 function kpi(label: string, value: string, sub = ''): HTMLElement {
@@ -615,8 +616,8 @@ function buildSettings(): void {
   // an event (IME commits, browser autofill, host re-render).
   if (settingsPage.dataset.previewBound !== '1') {
     settingsPage.dataset.previewBound = '1';
-    settingsPage.addEventListener('input', () => updatePreview(), true);
-    settingsPage.addEventListener('change', () => updatePreview(), true);
+    settingsPage.addEventListener('input', () => { updatePreview(); scheduleAutoSave(); }, true);
+    settingsPage.addEventListener('change', () => { updatePreview(); scheduleAutoSave(); }, true);
   }
 
   const saveRow = el('div', 'save-row');
@@ -629,6 +630,9 @@ function buildSettings(): void {
   saveStateEl = el('span', 'save-state', dirty ? '有未保存更改' : '已同步');
   saveRow.append(saveStateEl);
   settingsPage.append(saveRow);
+  settingsPage.append(
+    settingsNote('写入 ~/.config/opencode/enhanced-prompt-card.json；改动 0.6 秒内自动保存，插件下一轮按 mtime 读取。'),
+  );
 }
 
 function renderDiagnostics(): void {
@@ -757,22 +761,51 @@ async function refreshEvents(): Promise<void> {
   renderDiagnostics();
 }
 
-async function saveConfig(): Promise<void> {
+let autoSaveTimer: number | null = null;
+
+function scheduleAutoSave(): void {
+  if (!built || booting) return;
+  if (autoSaveTimer !== null) window.clearTimeout(autoSaveTimer);
+  autoSaveTimer = window.setTimeout(() => {
+    autoSaveTimer = null;
+    void saveConfig(true);
+  }, 600);
+}
+
+async function saveConfig(auto = false): Promise<void> {
   if (!dirty) return;
-  saveHandle?.update({ loading: true });
+  saveHandle?.update({ loading: !auto });
+  if (auto && saveStateEl) saveStateEl.textContent = '自动保存中…';
   try {
     const next = normalizeConfig(draft);
-    await host.writeFile(CONFIG_PATH, JSON.stringify(next, null, 2) + '\n');
+    // Save what is on screen, not a possibly stale draft copy.
+    const live = previewValues();
+    next.first.text = live.first;
+    next.step.text = live.step;
+    const payload = JSON.stringify(next, null, 2) + '\n';
+    await host.writeFile(CONFIG_PATH, payload);
+
+    // Read back: the file is the contract the plugin loads, so prove it matches.
+    const backRaw = await readText(CONFIG_PATH);
+    if (backRaw == null) throw new Error('写入后读不到配置文件');
+    const back = normalizeConfig(JSON.parse(backRaw) as unknown);
+    if (back.first.text !== next.first.text || back.step.text !== next.step.text) {
+      throw new Error('写入校验失败：文件内容与面板不一致');
+    }
+
     config = cloneConfig(next);
     // Keep the draft object identity: the built controls hold references to its
     // parts, and replacing it would leave them editing a detached copy.
+    draft.first.text = next.first.text;
+    draft.step.text = next.step.text;
     dirty = false;
+    configError = '';
     saveHandle?.update({ disabled: true });
-    if (saveStateEl) saveStateEl.textContent = '已保存 · 下一轮生效';
-    setBanner('info', '已保存', '配置已写入，插件下一轮读取；无需重启。');
+    if (saveStateEl) saveStateEl.textContent = auto ? '已自动保存 · 下一轮生效' : '已保存 · 下一轮生效';
+    if (!auto) setBanner('info', '已保存', '配置已写入并校验，插件下一轮读取；无需重启。');
     renderOverview();
   } catch (err) {
-    setBanner('error', '保存失败', err instanceof Error ? err.message : String(err));
+    setBanner('error', auto ? '自动保存失败' : '保存失败', err instanceof Error ? err.message : String(err));
   } finally {
     saveHandle?.update({ loading: false });
   }

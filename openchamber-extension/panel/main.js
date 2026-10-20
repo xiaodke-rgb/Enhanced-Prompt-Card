@@ -2106,7 +2106,7 @@ ${GUEST_UI_LOOK_CSS}`;
       enabled: false,
       first: { enabled: false, agents: [], text: "" },
       step: { enabled: false, agents: [], text: "" },
-      logging: { enabled: false, path: EVENTS_PATH }
+      logging: { enabled: false, path: "" }
     };
   }
   function cloneConfig(value) {
@@ -2248,6 +2248,7 @@ ${GUEST_UI_LOOK_CSS}`;
     dirty = true;
     saveHandle?.update({ disabled: false });
     if (saveStateEl) saveStateEl.textContent = "\u6709\u672A\u4FDD\u5B58\u66F4\u6539";
+    scheduleAutoSave();
   }
   function kpi(label, value, sub = "") {
     const box = el2("div", "kpi");
@@ -2547,8 +2548,14 @@ ${GUEST_UI_LOOK_CSS}`;
     updatePreview();
     if (settingsPage.dataset.previewBound !== "1") {
       settingsPage.dataset.previewBound = "1";
-      settingsPage.addEventListener("input", () => updatePreview(), true);
-      settingsPage.addEventListener("change", () => updatePreview(), true);
+      settingsPage.addEventListener("input", () => {
+        updatePreview();
+        scheduleAutoSave();
+      }, true);
+      settingsPage.addEventListener("change", () => {
+        updatePreview();
+        scheduleAutoSave();
+      }, true);
     }
     const saveRow = el2("div", "save-row");
     saveHandle = mountButton(saveRow, {
@@ -2560,6 +2567,9 @@ ${GUEST_UI_LOOK_CSS}`;
     saveStateEl = el2("span", "save-state", dirty ? "\u6709\u672A\u4FDD\u5B58\u66F4\u6539" : "\u5DF2\u540C\u6B65");
     saveRow.append(saveStateEl);
     settingsPage.append(saveRow);
+    settingsPage.append(
+      settingsNote("\u5199\u5165 ~/.config/opencode/enhanced-prompt-card.json\uFF1B\u6539\u52A8 0.6 \u79D2\u5185\u81EA\u52A8\u4FDD\u5B58\uFF0C\u63D2\u4EF6\u4E0B\u4E00\u8F6E\u6309 mtime \u8BFB\u53D6\u3002")
+    );
   }
   function renderDiagnostics() {
     diagSummaryEl.textContent = eventError ? eventError : events.length ? `\u8BCA\u65AD\u4E8B\u4EF6 ${events.length} \u6761 \xB7 \u6BCF\u8F6E\u9996\u6B21\u8C03\u7528\u4E00\u6761` : "\u8BCA\u65AD\u4E8B\u4EF6 0 \u6761 \xB7 \u63D2\u4EF6\u4EA7\u751F\u7B2C\u4E00\u8F6E\u540E\u4F1A\u51FA\u73B0";
@@ -2665,20 +2675,43 @@ ${GUEST_UI_LOOK_CSS}`;
     renderOverview();
     renderDiagnostics();
   }
-  async function saveConfig() {
+  var autoSaveTimer = null;
+  function scheduleAutoSave() {
+    if (!built || booting) return;
+    if (autoSaveTimer !== null) window.clearTimeout(autoSaveTimer);
+    autoSaveTimer = window.setTimeout(() => {
+      autoSaveTimer = null;
+      void saveConfig(true);
+    }, 600);
+  }
+  async function saveConfig(auto = false) {
     if (!dirty) return;
-    saveHandle?.update({ loading: true });
+    saveHandle?.update({ loading: !auto });
+    if (auto && saveStateEl) saveStateEl.textContent = "\u81EA\u52A8\u4FDD\u5B58\u4E2D\u2026";
     try {
       const next = normalizeConfig(draft);
-      await host.writeFile(CONFIG_PATH, JSON.stringify(next, null, 2) + "\n");
+      const live = previewValues();
+      next.first.text = live.first;
+      next.step.text = live.step;
+      const payload = JSON.stringify(next, null, 2) + "\n";
+      await host.writeFile(CONFIG_PATH, payload);
+      const backRaw = await readText(CONFIG_PATH);
+      if (backRaw == null) throw new Error("\u5199\u5165\u540E\u8BFB\u4E0D\u5230\u914D\u7F6E\u6587\u4EF6");
+      const back = normalizeConfig(JSON.parse(backRaw));
+      if (back.first.text !== next.first.text || back.step.text !== next.step.text) {
+        throw new Error("\u5199\u5165\u6821\u9A8C\u5931\u8D25\uFF1A\u6587\u4EF6\u5185\u5BB9\u4E0E\u9762\u677F\u4E0D\u4E00\u81F4");
+      }
       config = cloneConfig(next);
+      draft.first.text = next.first.text;
+      draft.step.text = next.step.text;
       dirty = false;
+      configError = "";
       saveHandle?.update({ disabled: true });
-      if (saveStateEl) saveStateEl.textContent = "\u5DF2\u4FDD\u5B58 \xB7 \u4E0B\u4E00\u8F6E\u751F\u6548";
-      setBanner("info", "\u5DF2\u4FDD\u5B58", "\u914D\u7F6E\u5DF2\u5199\u5165\uFF0C\u63D2\u4EF6\u4E0B\u4E00\u8F6E\u8BFB\u53D6\uFF1B\u65E0\u9700\u91CD\u542F\u3002");
+      if (saveStateEl) saveStateEl.textContent = auto ? "\u5DF2\u81EA\u52A8\u4FDD\u5B58 \xB7 \u4E0B\u4E00\u8F6E\u751F\u6548" : "\u5DF2\u4FDD\u5B58 \xB7 \u4E0B\u4E00\u8F6E\u751F\u6548";
+      if (!auto) setBanner("info", "\u5DF2\u4FDD\u5B58", "\u914D\u7F6E\u5DF2\u5199\u5165\u5E76\u6821\u9A8C\uFF0C\u63D2\u4EF6\u4E0B\u4E00\u8F6E\u8BFB\u53D6\uFF1B\u65E0\u9700\u91CD\u542F\u3002");
       renderOverview();
     } catch (err) {
-      setBanner("error", "\u4FDD\u5B58\u5931\u8D25", err instanceof Error ? err.message : String(err));
+      setBanner("error", auto ? "\u81EA\u52A8\u4FDD\u5B58\u5931\u8D25" : "\u4FDD\u5B58\u5931\u8D25", err instanceof Error ? err.message : String(err));
     } finally {
       saveHandle?.update({ loading: false });
     }
