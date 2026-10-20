@@ -789,7 +789,7 @@ async function saveConfig(auto = false): Promise<void> {
     const backRaw = await readText(CONFIG_PATH);
     if (backRaw == null) throw new Error('写入后读不到配置文件');
     const back = normalizeConfig(JSON.parse(backRaw) as unknown);
-    if (back.first.text !== next.first.text || back.step.text !== next.step.text) {
+    if (JSON.stringify(back) !== JSON.stringify(next)) {
       throw new Error('写入校验失败：文件内容与面板不一致');
     }
 
@@ -805,6 +805,7 @@ async function saveConfig(auto = false): Promise<void> {
     if (!auto) setBanner('info', '已保存', '配置已写入并校验，插件下一轮读取；无需重启。');
     renderOverview();
   } catch (err) {
+    if (saveStateEl) saveStateEl.textContent = auto ? '自动保存失败' : '保存失败';
     setBanner('error', auto ? '自动保存失败' : '保存失败', err instanceof Error ? err.message : String(err));
   } finally {
     saveHandle?.update({ loading: false });

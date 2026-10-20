@@ -2698,7 +2698,7 @@ ${GUEST_UI_LOOK_CSS}`;
       const backRaw = await readText(CONFIG_PATH);
       if (backRaw == null) throw new Error("\u5199\u5165\u540E\u8BFB\u4E0D\u5230\u914D\u7F6E\u6587\u4EF6");
       const back = normalizeConfig(JSON.parse(backRaw));
-      if (back.first.text !== next.first.text || back.step.text !== next.step.text) {
+      if (JSON.stringify(back) !== JSON.stringify(next)) {
         throw new Error("\u5199\u5165\u6821\u9A8C\u5931\u8D25\uFF1A\u6587\u4EF6\u5185\u5BB9\u4E0E\u9762\u677F\u4E0D\u4E00\u81F4");
       }
       config = cloneConfig(next);
@@ -2711,6 +2711,7 @@ ${GUEST_UI_LOOK_CSS}`;
       if (!auto) setBanner("info", "\u5DF2\u4FDD\u5B58", "\u914D\u7F6E\u5DF2\u5199\u5165\u5E76\u6821\u9A8C\uFF0C\u63D2\u4EF6\u4E0B\u4E00\u8F6E\u8BFB\u53D6\uFF1B\u65E0\u9700\u91CD\u542F\u3002");
       renderOverview();
     } catch (err) {
+      if (saveStateEl) saveStateEl.textContent = auto ? "\u81EA\u52A8\u4FDD\u5B58\u5931\u8D25" : "\u4FDD\u5B58\u5931\u8D25";
       setBanner("error", auto ? "\u81EA\u52A8\u4FDD\u5B58\u5931\u8D25" : "\u4FDD\u5B58\u5931\u8D25", err instanceof Error ? err.message : String(err));
     } finally {
       saveHandle?.update({ loading: false });
