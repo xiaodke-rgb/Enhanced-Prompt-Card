@@ -46,10 +46,16 @@ type Config = {
 
 type EventRow = {
   ts: string;
+  kind?: string;
   sessionID?: string;
   agent?: string;
+  messageID?: string;
   injectedFirst?: boolean;
   injectedStep?: boolean;
+  persistedStep?: boolean;
+  persistReason?: string;
+  reason?: string;
+  model?: string;
   error?: string | null;
 };
 
@@ -286,7 +292,31 @@ function fmtPct(value: number): string {
   return `${Math.round(value * 100)}%`;
 }
 
+function reasonLabel(value?: string): string {
+  switch (value) {
+    case 'injected':
+      return '已注入';
+    case 'model-mismatch':
+      return '模型不符';
+    case 'no-model':
+      return '未取到模型';
+    case 'appended':
+      return '已追加';
+    case 'already-persisted':
+      return '已存在';
+    default:
+      return value || '—';
+  }
+}
+
+function eventKindLabel(row: EventRow): string {
+  const base = row.kind === 'prompt' ? '用户消息' : row.kind === 'first' ? '首轮调用' : '旧记录';
+  return row.agent ? `${base} · ${row.agent}` : base;
+}
+
 function injectionLabel(row: EventRow): string {
+  if (row.kind === 'prompt') return row.persistedStep ? 'S 已落盘' : 'S 未落盘';
+  if (row.kind === 'first') return row.injectedFirst ? 'F 已注入' : 'F 未注入';
   return [row.injectedFirst ? 'F' : '', row.injectedStep ? 'S' : ''].filter(Boolean).join('+') || '—';
 }
 
@@ -327,11 +357,13 @@ function settingsNote(text: string): HTMLElement {
 }
 
 const EVENT_COLUMNS: Array<{ label: string; width: string }> = [
-  { label: '时间', width: '112px' },
-  { label: 'agent', width: '88px' },
+  { label: '时间', width: '96px' },
+  { label: '类型', width: '120px' },
   { label: '会话', width: 'auto' },
-  { label: '注入', width: '68px' },
-  { label: '错误', width: '150px' },
+  { label: '结果', width: '100px' },
+  { label: '原因', width: '96px' },
+  { label: '模型', width: 'auto' },
+  { label: '错误', width: '110px' },
 ];
 
 function eventTable(rows: EventRow[]): HTMLElement {
@@ -354,9 +386,11 @@ function eventTable(rows: EventRow[]): HTMLElement {
     session.title = row.sessionID || '';
     tr.append(
       el('td', 'num', fmtDayTime(row.ts)),
-      el('td', 'mono', row.agent || '—'),
+      el('td', '', eventKindLabel(row)),
       session,
       el('td', row.error ? 'bad' : 'ok', injectionLabel(row)),
+      el('td', row.error ? 'bad' : '', reasonLabel(row.reason || row.persistReason)),
+      el('td', 'mono', row.model || '—'),
       el('td', row.error ? 'bad' : '', row.error || ''),
     );
     body.append(tr);
@@ -369,7 +403,8 @@ function eventTable(rows: EventRow[]): HTMLElement {
 function renderOverview(): void {
   const rows = todayRows();
   const first = rows.filter((row) => Boolean(row.injectedFirst)).length;
-  const step = rows.filter((row) => Boolean(row.injectedStep)).length;
+  const persisted = rows.filter((row) => Boolean(row.persistedStep)).length;
+  const skipped = rows.filter((row) => row.reason === 'model-mismatch' || row.reason === 'no-model').length;
   const errors = rows.filter((row) => !!row.error).length;
 
   statusPillEl.textContent = config.enabled ? 'Active' : 'Inactive';
@@ -377,9 +412,10 @@ function renderOverview(): void {
 
   kpisEl.textContent = '';
   kpisEl.append(
-    kpi('今日轮次', String(rows.length)),
-    kpi('首次注入', rows.length ? fmtPct(first / rows.length) : '—', 'F'),
-    kpi('每步注入', rows.length ? fmtPct(step / rows.length) : '—', 'S'),
+    kpi('今日事件', String(rows.length)),
+    kpi('首轮 F', String(first), '次注入'),
+    kpi('S 落盘', String(persisted), '条用户消息'),
+    kpi('跳过 F', String(skipped), skipped ? '模型不符/无模型' : ''),
     kpi('错误', String(errors), errors ? '查看诊断' : ''),
   );
 
@@ -408,13 +444,12 @@ function previewText(): string {
   const step = draft.step.enabled ? values.step : '';
   if (!first && !step) return '两段都为空：不注入任何内容，消息原样发送。';
   const models = draft.first.models.length ? `（仅限模型：${draft.first.models.join(', ')}）` : '';
-  const firstCall = [first, step].filter(Boolean).join('\n');
   return [
-    `首次调用（first + step）${models}`,
-    firstCall || '（不注入）',
+    '用户消息（S 落盘）',
+    step || '（不落盘）',
     '',
-    '后续调用（step）',
-    step || '（不注入）',
+    `首轮调用（临时 F）${models}`,
+    first || '（不注入）',
   ].join('\n');
 }
 
@@ -656,7 +691,7 @@ function buildSettings(): void {
       'first',
       '每轮首次注入',
       '每轮第一次',
-      '只在本轮第一次模型调用时追加，需同时满足所选 agent 与模型；文本为空就不加这一段。',
+      '只在本轮第一次模型调用时临时追加，需同时满足所选 agent 与模型；文本为空就不加这一段。',
       true,
     ),
   );
@@ -664,9 +699,9 @@ function buildSettings(): void {
   settingsPage.append(
     buildPartCard(
       'step',
-      '每步注入',
-      '每次模型调用',
-      '用户提问那一步和之后每次工具调用都追加；文本为空就不加这一段。',
+      '纪律提醒（S）',
+      '落盘',
+      '用户提问时追加到消息尾部并落盘；之后每步从历史读取，不再重复注入。文本为空就不加。',
     ),
   );
 
@@ -681,7 +716,7 @@ function buildSettings(): void {
   const pathRow = el('div', 'setting-row');
   pathRow.append(el('span', 'row-label', '路径'), el('div', 'setting-value', draft.logging.path));
   logBody.append(pathRow);
-  logCard.append(logBody, settingsNote('每个轮次首次调用记一条；没有注入时不写。'));
+  logCard.append(logBody, settingsNote('用户消息落盘记一条，首轮临时注入再记一条；没有事件时不写。'));
   settingsPage.append(logCard);
 
   let logSwitch: ReturnType<typeof mountSwitch> | null = null;
@@ -700,7 +735,7 @@ function buildSettings(): void {
   const previewBody = el('div', 'settings-card-body');
   previewEl = el('div', 'preview');
   previewBody.append(previewEl);
-  previewCard.append(previewBody, settingsNote('实际注入时按各段所选 agent 过滤；这是合并后的样子。'));
+  previewCard.append(previewBody, settingsNote('S 写入用户消息；F 只临时加在首轮请求，按 agent 与模型过滤。'));
   settingsPage.append(previewCard);
   updatePreview();
 
@@ -731,7 +766,7 @@ function renderDiagnostics(): void {
   diagSummaryEl.textContent = eventError
     ? eventError
     : events.length
-      ? `诊断事件 ${events.length} 条 · 每轮首次调用一条`
+      ? `诊断事件 ${events.length} 条 · 用户消息落盘 + 首轮调用`
       : '诊断事件 0 条 · 插件产生第一轮后会出现';
   diagSummaryEl.classList.add('foot');
 
@@ -801,7 +836,7 @@ function buildDom(): void {
     el(
       'div',
       'hd-desc',
-      '为所选 agent 注入两段临时提醒：每轮首次（first）+ 每步（step）\n追加在当前用户消息请求副本尾部，不落盘、不发第二条消息。',
+      '为所选 agent 追加两段提醒：S 落盘到用户消息，F 只在首轮调用临时注入\n不修改工具结果、不发第二条消息。',
     ),
   );
   root.append(hd);
@@ -969,11 +1004,11 @@ async function bootMock(): Promise<void> {
   const now = Date.now();
   const session = 'ses_3e342829-9df5-4bda-b5d0-428ada3ab8b8';
   events = [
-    { ts: new Date(now - 4 * 60e3).toISOString(), sessionID: session, agent: 'plan', injectedFirst: true, injectedStep: true, error: null },
-    { ts: new Date(now - 11 * 60e3).toISOString(), sessionID: session, agent: 'plan', injectedFirst: false, injectedStep: true, error: null },
-    { ts: new Date(now - 26 * 60e3).toISOString(), sessionID: 'ses_71a0c4de-2b46-4d7a-9c19-0f5c2b7d8e11', agent: 'build', injectedFirst: true, injectedStep: true, error: null },
-    { ts: new Date(now - 42 * 60e3).toISOString(), sessionID: 'ses_71a0c4de-2b46-4d7a-9c19-0f5c2b7d8e11', agent: 'build', injectedFirst: false, injectedStep: true, error: null },
-    { ts: new Date(now - 58 * 60e3).toISOString(), sessionID: session, agent: 'plan', injectedFirst: false, injectedStep: false, error: 'write failed: EACCES' },
+    { kind: 'prompt', ts: new Date(now - 4 * 60e3).toISOString(), sessionID: session, agent: 'plan', persistedStep: true, persistReason: 'appended', injectedFirst: false, injectedStep: true, error: null },
+    { kind: 'first', ts: new Date(now - 4 * 60e3 + 80).toISOString(), sessionID: session, agent: 'plan', injectedFirst: true, reason: 'injected', model: 'deepseek/deepseek-flash', error: null },
+    { kind: 'prompt', ts: new Date(now - 26 * 60e3).toISOString(), sessionID: 'ses_71a0c4de-2b46-4d7a-9c19-0f5c2b7d8e11', agent: 'build', persistedStep: true, persistReason: 'already-persisted', injectedFirst: false, injectedStep: true, error: null },
+    { kind: 'first', ts: new Date(now - 26 * 60e3 + 80).toISOString(), sessionID: 'ses_71a0c4de-2b46-4d7a-9c19-0f5c2b7d8e11', agent: 'build', injectedFirst: false, reason: 'model-mismatch', model: 'opencode-go/grok-4.7', error: null },
+    { kind: 'first', ts: new Date(now - 58 * 60e3).toISOString(), sessionID: session, agent: 'plan', injectedFirst: false, reason: 'no-model', model: '', error: 'write failed: EACCES' },
   ];
   buildDom();
   renderOverview();

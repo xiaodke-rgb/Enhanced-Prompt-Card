@@ -2501,10 +2501,29 @@ ${GUEST_UI_LOOK_CSS}`;
     if (!date) return "\u2014";
     return date.toLocaleString("zh-CN", { month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit" });
   }
-  function fmtPct(value) {
-    return `${Math.round(value * 100)}%`;
+  function reasonLabel(value) {
+    switch (value) {
+      case "injected":
+        return "\u5DF2\u6CE8\u5165";
+      case "model-mismatch":
+        return "\u6A21\u578B\u4E0D\u7B26";
+      case "no-model":
+        return "\u672A\u53D6\u5230\u6A21\u578B";
+      case "appended":
+        return "\u5DF2\u8FFD\u52A0";
+      case "already-persisted":
+        return "\u5DF2\u5B58\u5728";
+      default:
+        return value || "\u2014";
+    }
+  }
+  function eventKindLabel(row) {
+    const base = row.kind === "prompt" ? "\u7528\u6237\u6D88\u606F" : row.kind === "first" ? "\u9996\u8F6E\u8C03\u7528" : "\u65E7\u8BB0\u5F55";
+    return row.agent ? `${base} \xB7 ${row.agent}` : base;
   }
   function injectionLabel(row) {
+    if (row.kind === "prompt") return row.persistedStep ? "S \u5DF2\u843D\u76D8" : "S \u672A\u843D\u76D8";
+    if (row.kind === "first") return row.injectedFirst ? "F \u5DF2\u6CE8\u5165" : "F \u672A\u6CE8\u5165";
     return [row.injectedFirst ? "F" : "", row.injectedStep ? "S" : ""].filter(Boolean).join("+") || "\u2014";
   }
   function setBanner(tone2, title, body) {
@@ -2538,11 +2557,13 @@ ${GUEST_UI_LOOK_CSS}`;
     return el2("div", "settings-note", text);
   }
   var EVENT_COLUMNS = [
-    { label: "\u65F6\u95F4", width: "112px" },
-    { label: "agent", width: "88px" },
+    { label: "\u65F6\u95F4", width: "96px" },
+    { label: "\u7C7B\u578B", width: "120px" },
     { label: "\u4F1A\u8BDD", width: "auto" },
-    { label: "\u6CE8\u5165", width: "68px" },
-    { label: "\u9519\u8BEF", width: "150px" }
+    { label: "\u7ED3\u679C", width: "100px" },
+    { label: "\u539F\u56E0", width: "96px" },
+    { label: "\u6A21\u578B", width: "auto" },
+    { label: "\u9519\u8BEF", width: "110px" }
   ];
   function eventTable(rows) {
     const wrap = el2("div", "table-wrap");
@@ -2564,9 +2585,11 @@ ${GUEST_UI_LOOK_CSS}`;
       session.title = row.sessionID || "";
       tr.append(
         el2("td", "num", fmtDayTime(row.ts)),
-        el2("td", "mono", row.agent || "\u2014"),
+        el2("td", "", eventKindLabel(row)),
         session,
         el2("td", row.error ? "bad" : "ok", injectionLabel(row)),
+        el2("td", row.error ? "bad" : "", reasonLabel(row.reason || row.persistReason)),
+        el2("td", "mono", row.model || "\u2014"),
         el2("td", row.error ? "bad" : "", row.error || "")
       );
       body.append(tr);
@@ -2578,15 +2601,17 @@ ${GUEST_UI_LOOK_CSS}`;
   function renderOverview() {
     const rows = todayRows();
     const first = rows.filter((row) => Boolean(row.injectedFirst)).length;
-    const step = rows.filter((row) => Boolean(row.injectedStep)).length;
+    const persisted = rows.filter((row) => Boolean(row.persistedStep)).length;
+    const skipped = rows.filter((row) => row.reason === "model-mismatch" || row.reason === "no-model").length;
     const errors = rows.filter((row) => !!row.error).length;
     statusPillEl.textContent = config.enabled ? "Active" : "Inactive";
     statusPillEl.classList.toggle("off", !config.enabled);
     kpisEl.textContent = "";
     kpisEl.append(
-      kpi("\u4ECA\u65E5\u8F6E\u6B21", String(rows.length)),
-      kpi("\u9996\u6B21\u6CE8\u5165", rows.length ? fmtPct(first / rows.length) : "\u2014", "F"),
-      kpi("\u6BCF\u6B65\u6CE8\u5165", rows.length ? fmtPct(step / rows.length) : "\u2014", "S"),
+      kpi("\u4ECA\u65E5\u4E8B\u4EF6", String(rows.length)),
+      kpi("\u9996\u8F6E F", String(first), "\u6B21\u6CE8\u5165"),
+      kpi("S \u843D\u76D8", String(persisted), "\u6761\u7528\u6237\u6D88\u606F"),
+      kpi("\u8DF3\u8FC7 F", String(skipped), skipped ? "\u6A21\u578B\u4E0D\u7B26/\u65E0\u6A21\u578B" : ""),
       kpi("\u9519\u8BEF", String(errors), errors ? "\u67E5\u770B\u8BCA\u65AD" : "")
     );
     recentEl.textContent = "";
@@ -2609,13 +2634,12 @@ ${GUEST_UI_LOOK_CSS}`;
     const step = draft.step.enabled ? values.step : "";
     if (!first && !step) return "\u4E24\u6BB5\u90FD\u4E3A\u7A7A\uFF1A\u4E0D\u6CE8\u5165\u4EFB\u4F55\u5185\u5BB9\uFF0C\u6D88\u606F\u539F\u6837\u53D1\u9001\u3002";
     const models = draft.first.models.length ? `\uFF08\u4EC5\u9650\u6A21\u578B\uFF1A${draft.first.models.join(", ")}\uFF09` : "";
-    const firstCall = [first, step].filter(Boolean).join("\n");
     return [
-      `\u9996\u6B21\u8C03\u7528\uFF08first + step\uFF09${models}`,
-      firstCall || "\uFF08\u4E0D\u6CE8\u5165\uFF09",
+      "\u7528\u6237\u6D88\u606F\uFF08S \u843D\u76D8\uFF09",
+      step || "\uFF08\u4E0D\u843D\u76D8\uFF09",
       "",
-      "\u540E\u7EED\u8C03\u7528\uFF08step\uFF09",
-      step || "\uFF08\u4E0D\u6CE8\u5165\uFF09"
+      `\u9996\u8F6E\u8C03\u7528\uFF08\u4E34\u65F6 F\uFF09${models}`,
+      first || "\uFF08\u4E0D\u6CE8\u5165\uFF09"
     ].join("\n");
   }
   function updatePreview() {
@@ -2831,16 +2855,16 @@ ${GUEST_UI_LOOK_CSS}`;
         "first",
         "\u6BCF\u8F6E\u9996\u6B21\u6CE8\u5165",
         "\u6BCF\u8F6E\u7B2C\u4E00\u6B21",
-        "\u53EA\u5728\u672C\u8F6E\u7B2C\u4E00\u6B21\u6A21\u578B\u8C03\u7528\u65F6\u8FFD\u52A0\uFF0C\u9700\u540C\u65F6\u6EE1\u8DB3\u6240\u9009 agent \u4E0E\u6A21\u578B\uFF1B\u6587\u672C\u4E3A\u7A7A\u5C31\u4E0D\u52A0\u8FD9\u4E00\u6BB5\u3002",
+        "\u53EA\u5728\u672C\u8F6E\u7B2C\u4E00\u6B21\u6A21\u578B\u8C03\u7528\u65F6\u4E34\u65F6\u8FFD\u52A0\uFF0C\u9700\u540C\u65F6\u6EE1\u8DB3\u6240\u9009 agent \u4E0E\u6A21\u578B\uFF1B\u6587\u672C\u4E3A\u7A7A\u5C31\u4E0D\u52A0\u8FD9\u4E00\u6BB5\u3002",
         true
       )
     );
     settingsPage.append(
       buildPartCard(
         "step",
-        "\u6BCF\u6B65\u6CE8\u5165",
-        "\u6BCF\u6B21\u6A21\u578B\u8C03\u7528",
-        "\u7528\u6237\u63D0\u95EE\u90A3\u4E00\u6B65\u548C\u4E4B\u540E\u6BCF\u6B21\u5DE5\u5177\u8C03\u7528\u90FD\u8FFD\u52A0\uFF1B\u6587\u672C\u4E3A\u7A7A\u5C31\u4E0D\u52A0\u8FD9\u4E00\u6BB5\u3002"
+        "\u7EAA\u5F8B\u63D0\u9192\uFF08S\uFF09",
+        "\u843D\u76D8",
+        "\u7528\u6237\u63D0\u95EE\u65F6\u8FFD\u52A0\u5230\u6D88\u606F\u5C3E\u90E8\u5E76\u843D\u76D8\uFF1B\u4E4B\u540E\u6BCF\u6B65\u4ECE\u5386\u53F2\u8BFB\u53D6\uFF0C\u4E0D\u518D\u91CD\u590D\u6CE8\u5165\u3002\u6587\u672C\u4E3A\u7A7A\u5C31\u4E0D\u52A0\u3002"
       )
     );
     const logCard = el2("div", "settings-card");
@@ -2854,7 +2878,7 @@ ${GUEST_UI_LOOK_CSS}`;
     const pathRow = el2("div", "setting-row");
     pathRow.append(el2("span", "row-label", "\u8DEF\u5F84"), el2("div", "setting-value", draft.logging.path));
     logBody.append(pathRow);
-    logCard.append(logBody, settingsNote("\u6BCF\u4E2A\u8F6E\u6B21\u9996\u6B21\u8C03\u7528\u8BB0\u4E00\u6761\uFF1B\u6CA1\u6709\u6CE8\u5165\u65F6\u4E0D\u5199\u3002"));
+    logCard.append(logBody, settingsNote("\u7528\u6237\u6D88\u606F\u843D\u76D8\u8BB0\u4E00\u6761\uFF0C\u9996\u8F6E\u4E34\u65F6\u6CE8\u5165\u518D\u8BB0\u4E00\u6761\uFF1B\u6CA1\u6709\u4E8B\u4EF6\u65F6\u4E0D\u5199\u3002"));
     settingsPage.append(logCard);
     let logSwitch = null;
     logSwitch = mountSwitch(logSwitchSlot, {
@@ -2871,7 +2895,7 @@ ${GUEST_UI_LOOK_CSS}`;
     const previewBody = el2("div", "settings-card-body");
     previewEl = el2("div", "preview");
     previewBody.append(previewEl);
-    previewCard.append(previewBody, settingsNote("\u5B9E\u9645\u6CE8\u5165\u65F6\u6309\u5404\u6BB5\u6240\u9009 agent \u8FC7\u6EE4\uFF1B\u8FD9\u662F\u5408\u5E76\u540E\u7684\u6837\u5B50\u3002"));
+    previewCard.append(previewBody, settingsNote("S \u5199\u5165\u7528\u6237\u6D88\u606F\uFF1BF \u53EA\u4E34\u65F6\u52A0\u5728\u9996\u8F6E\u8BF7\u6C42\uFF0C\u6309 agent \u4E0E\u6A21\u578B\u8FC7\u6EE4\u3002"));
     settingsPage.append(previewCard);
     updatePreview();
     if (settingsPage.dataset.previewBound !== "1") {
@@ -2900,7 +2924,7 @@ ${GUEST_UI_LOOK_CSS}`;
     );
   }
   function renderDiagnostics() {
-    diagSummaryEl.textContent = eventError ? eventError : events.length ? `\u8BCA\u65AD\u4E8B\u4EF6 ${events.length} \u6761 \xB7 \u6BCF\u8F6E\u9996\u6B21\u8C03\u7528\u4E00\u6761` : "\u8BCA\u65AD\u4E8B\u4EF6 0 \u6761 \xB7 \u63D2\u4EF6\u4EA7\u751F\u7B2C\u4E00\u8F6E\u540E\u4F1A\u51FA\u73B0";
+    diagSummaryEl.textContent = eventError ? eventError : events.length ? `\u8BCA\u65AD\u4E8B\u4EF6 ${events.length} \u6761 \xB7 \u7528\u6237\u6D88\u606F\u843D\u76D8 + \u9996\u8F6E\u8C03\u7528` : "\u8BCA\u65AD\u4E8B\u4EF6 0 \u6761 \xB7 \u63D2\u4EF6\u4EA7\u751F\u7B2C\u4E00\u8F6E\u540E\u4F1A\u51FA\u73B0";
     diagSummaryEl.classList.add("foot");
     diagTableEl.textContent = "";
     if (!events.length) {
@@ -2960,7 +2984,7 @@ ${GUEST_UI_LOOK_CSS}`;
       el2(
         "div",
         "hd-desc",
-        "\u4E3A\u6240\u9009 agent \u6CE8\u5165\u4E24\u6BB5\u4E34\u65F6\u63D0\u9192\uFF1A\u6BCF\u8F6E\u9996\u6B21\uFF08first\uFF09+ \u6BCF\u6B65\uFF08step\uFF09\n\u8FFD\u52A0\u5728\u5F53\u524D\u7528\u6237\u6D88\u606F\u8BF7\u6C42\u526F\u672C\u5C3E\u90E8\uFF0C\u4E0D\u843D\u76D8\u3001\u4E0D\u53D1\u7B2C\u4E8C\u6761\u6D88\u606F\u3002"
+        "\u4E3A\u6240\u9009 agent \u8FFD\u52A0\u4E24\u6BB5\u63D0\u9192\uFF1AS \u843D\u76D8\u5230\u7528\u6237\u6D88\u606F\uFF0CF \u53EA\u5728\u9996\u8F6E\u8C03\u7528\u4E34\u65F6\u6CE8\u5165\n\u4E0D\u4FEE\u6539\u5DE5\u5177\u7ED3\u679C\u3001\u4E0D\u53D1\u7B2C\u4E8C\u6761\u6D88\u606F\u3002"
       )
     );
     root.append(hd);
@@ -3103,11 +3127,11 @@ ${GUEST_UI_LOOK_CSS}`;
     const now = Date.now();
     const session = "ses_3e342829-9df5-4bda-b5d0-428ada3ab8b8";
     events = [
-      { ts: new Date(now - 4 * 6e4).toISOString(), sessionID: session, agent: "plan", injectedFirst: true, injectedStep: true, error: null },
-      { ts: new Date(now - 11 * 6e4).toISOString(), sessionID: session, agent: "plan", injectedFirst: false, injectedStep: true, error: null },
-      { ts: new Date(now - 26 * 6e4).toISOString(), sessionID: "ses_71a0c4de-2b46-4d7a-9c19-0f5c2b7d8e11", agent: "build", injectedFirst: true, injectedStep: true, error: null },
-      { ts: new Date(now - 42 * 6e4).toISOString(), sessionID: "ses_71a0c4de-2b46-4d7a-9c19-0f5c2b7d8e11", agent: "build", injectedFirst: false, injectedStep: true, error: null },
-      { ts: new Date(now - 58 * 6e4).toISOString(), sessionID: session, agent: "plan", injectedFirst: false, injectedStep: false, error: "write failed: EACCES" }
+      { kind: "prompt", ts: new Date(now - 4 * 6e4).toISOString(), sessionID: session, agent: "plan", persistedStep: true, persistReason: "appended", injectedFirst: false, injectedStep: true, error: null },
+      { kind: "first", ts: new Date(now - 4 * 6e4 + 80).toISOString(), sessionID: session, agent: "plan", injectedFirst: true, reason: "injected", model: "deepseek/deepseek-flash", error: null },
+      { kind: "prompt", ts: new Date(now - 26 * 6e4).toISOString(), sessionID: "ses_71a0c4de-2b46-4d7a-9c19-0f5c2b7d8e11", agent: "build", persistedStep: true, persistReason: "already-persisted", injectedFirst: false, injectedStep: true, error: null },
+      { kind: "first", ts: new Date(now - 26 * 6e4 + 80).toISOString(), sessionID: "ses_71a0c4de-2b46-4d7a-9c19-0f5c2b7d8e11", agent: "build", injectedFirst: false, reason: "model-mismatch", model: "opencode-go/grok-4.7", error: null },
+      { kind: "first", ts: new Date(now - 58 * 6e4).toISOString(), sessionID: session, agent: "plan", injectedFirst: false, reason: "no-model", model: "", error: "write failed: EACCES" }
     ];
     buildDom();
     renderOverview();
