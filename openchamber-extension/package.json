@@ -1,6 +1,6 @@
 {
   "name": "openchamber-enhanced-prompt-card",
-  "version": "0.1.9",
+  "version": "0.1.10",
   "private": true,
   "description": "增强提示卡 设置与诊断面板（OpenChamber 扩展）",
   "scripts": {

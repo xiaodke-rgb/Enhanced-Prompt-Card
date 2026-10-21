@@ -54,6 +54,7 @@ type EventRow = {
   injectedStep?: boolean;
   persistedStep?: boolean;
   persistReason?: string;
+  syntheticStep?: boolean;
   reason?: string;
   model?: string;
   error?: string | null;
@@ -304,6 +305,10 @@ function reasonLabel(value?: string): string {
       return '已追加';
     case 'already-persisted':
       return '已存在';
+    case 'synthetic':
+      return '隐藏注入';
+    case 'synthetic-error':
+      return '隐藏注入失败';
     default:
       return value || '—';
   }
@@ -315,7 +320,10 @@ function eventKindLabel(row: EventRow): string {
 }
 
 function injectionLabel(row: EventRow): string {
-  if (row.kind === 'prompt') return row.persistedStep ? 'S 已落盘' : 'S 未落盘';
+  if (row.kind === 'prompt') {
+    if (row.syntheticStep) return 'S 已注入（隐藏）';
+    return row.persistedStep ? 'S 已落盘' : 'S 未落盘';
+  }
   if (row.kind === 'first') return row.injectedFirst ? 'F 已注入' : 'F 未注入';
   return [row.injectedFirst ? 'F' : '', row.injectedStep ? 'S' : ''].filter(Boolean).join('+') || '—';
 }
@@ -414,7 +422,7 @@ function renderOverview(): void {
   kpisEl.append(
     kpi('今日事件', String(rows.length)),
     kpi('首轮 F', String(first), '次注入'),
-    kpi('S 落盘', String(persisted), '条用户消息'),
+    kpi('S 注入', String(persisted), '条隐藏消息'),
     kpi('跳过 F', String(skipped), skipped ? '模型不符/无模型' : ''),
     kpi('错误', String(errors), errors ? '查看诊断' : ''),
   );

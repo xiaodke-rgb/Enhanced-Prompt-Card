@@ -1,8 +1,9 @@
 // Enhanced Prompt Card — one persisted discipline reminder plus one temporary
 // first-turn reminder, top-level turns only.
 //
-// step  ("每步注入")   is appended to the canonical user input by the prompt
-// hook, so it is stored in history and every model call of the turn sees it.
+// step  ("每步注入")   is persisted as a separate synthetic user message by the
+// prompt hook, before the user prompt; it is hidden from the chat UI but every
+// later model call of the turn still sees it.
 // first ("每轮首次注入") is appended to the request copy only, on the turn's
 // first model call; it is never persisted.
 //
@@ -411,23 +412,29 @@ async function onPrompt(ctx: any, event: any): Promise<void> {
       String(event?.type || "") === "synthetic"
     if (synthetic) return
 
-    // Step is persisted into the canonical user input by this prompt hook, so
-    // every later model call sees it in history without touching tool results.
+    // Step is persisted as a separate synthetic user message before the prompt,
+    // so the chat UI stays clean while every later model call still sees it.
     let persistedStep = false
-    let persistReason = "no-prompt-text"
+    let persistReason = "no-step"
+    let syntheticID: string | null = null
+    let syntheticDelivery: string | null = null
+    let errorMessage: string | null = null
     if (stepText) {
-      if (prompt && typeof prompt.text === "string") {
-        const base = prompt.text.replace(/\s+$/, "")
-        if (base.endsWith(stepText)) {
-          persistReason = "already-present"
-        } else {
-          prompt.text = base ? `${base}\n\n${stepText}` : stepText
-          persistedStep = true
-          persistReason = "appended"
-        }
+      try {
+        const result = await ctx.session.synthetic({
+          sessionID,
+          text: stepText,
+          resume: false,
+        })
+        persistedStep = true
+        persistReason = "synthetic"
+        syntheticID = typeof result?.id === "string" ? result.id : null
+        syntheticDelivery =
+          typeof result?.delivery === "string" ? result.delivery : null
+      } catch (error) {
+        persistReason = "synthetic-error"
+        errorMessage = error instanceof Error ? error.message : String(error)
       }
-    } else {
-      persistReason = "no-step"
     }
 
     if (firstText && messageID) {
@@ -442,9 +449,12 @@ async function onPrompt(ctx: any, event: any): Promise<void> {
       messageID,
       persistedStep,
       persistReason,
+      syntheticStep: persistedStep,
+      syntheticID,
+      syntheticDelivery,
       injectedFirst: false,
       injectedStep: persistedStep,
-      error: null,
+      error: errorMessage,
     })
   } catch {
     // Never block the prompt.

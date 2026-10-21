@@ -1,8 +1,8 @@
 # Enhanced Prompt Card
 
-给 OpenCode 的顶层会话追加两段提醒：**纪律提醒（S）落盘到用户消息**，**首轮提醒（F）只在第一次模型调用临时注入**。
+给 OpenCode 的顶层会话追加两段提醒：**纪律提醒（S）作为隐藏的 synthetic 用户消息落盘**，**首轮提醒（F）只在第一次模型调用临时注入**。
 
-只拦截、只拼装、只追加：插件不自带任何文案，文本为空就不落盘/不注入。S 在 prompt hook 追加到用户消息并落盘；F 只改当前请求副本，不落盘，也不会出现成第二条用户消息。
+只拦截、只拼装、只追加：插件不自带任何文案，文本为空就不注入。S 在 prompt hook 创建一条 synthetic 用户消息，排在用户消息前并落盘，但聊天框不显示；F 只改当前请求副本，不落盘，也不会出现成第二条用户消息。
 
 ## 目录
 
@@ -19,13 +19,13 @@ openchamber-extension/         OpenChamber 面板扩展（设置 + 诊断）
 ## 行为
 
 - `first`：用户发出问题的第一次模型调用临时注入，需同时命中 agent 与模型。
-- `step`：用户提问时追加到用户消息尾部并落盘，之后每步从历史读取，不再重复注入。
-- 首次调用 = `S + "\n" + F`；后续调用不再追加。
+- `step`：用户提问时创建一条 synthetic 用户消息，排在用户消息前并落盘；聊天框不显示，之后每步从历史读取，不再重复注入。
+- 首次调用 = S（前一条 user 消息）+ F（当前 user 消息尾部），两者不是拼进同一条消息。
 - 两段各自独立配置启用的 agent，默认 `plan`、`build`；不对子代理生效。
 - 文本为空、agent 未勾选、开关关闭 → 该段不生效；两段都不生效时消息原样发送。
 - `[系统提醒(非用户问题)]` 这类前缀只是文本内容，插件不会额外加标题或标记。
 
-成本参考：first ≈ 58 tokens，step ≈ 32 tokens（o200k 估算）。S 落盘后进入前缀，跨轮可复用；每轮只有临时 F 无法复用。
+成本参考：first ≈ 58 tokens，step ≈ 32 tokens（o200k 估算）。S 作为独立 synthetic 消息落盘，跨轮可复用；每轮只有临时 F 无法复用。
 
 ## 安装插件
 
@@ -66,7 +66,7 @@ npm run build
 
 面板提供：
 
-- 概览：今日事件、首轮 F、S 落盘、跳过、错误数、最近事件表
+- 概览：今日事件、首轮 F、S 注入、跳过、错误数、最近事件表
 - 设置：总开关、两段各自的开关 / agent 多选 / 文本、first 作用模型、日志开关、拼接预览
 - 诊断：最近事件表（时间 / 类型 / 会话 / 结果 / 原因 / 模型 / 错误）、刷新、复制 JSONL、清空
 
@@ -74,11 +74,11 @@ npm run build
 
 ## 日志
 
-用户消息落盘时写一条 `kind:"prompt"`，首轮调用再写一条 `kind:"first"`：
+用户消息提交时写一条 `kind:"prompt"`（S 以 synthetic 消息落盘），首轮调用再写一条 `kind:"first"`：
 
 ```json
-{"ts":"2026-10-21T06:29:35.220Z","kind":"prompt","sessionID":"ses_...","agent":"build","messageID":"msg_...","persistedStep":true,"persistReason":"appended","injectedFirst":false,"injectedStep":true,"error":null}
-{"ts":"2026-10-21T06:29:35.292Z","kind":"first","sessionID":"ses_...","agent":"build","messageID":"msg_...","model":"deepseek/deepseek-flash","injectedFirst":true,"injectedStep":false,"reason":"injected","error":null}
+{"ts":"2026-10-21T09:16:26.279Z","kind":"prompt","sessionID":"ses_...","agent":"build","messageID":"msg_...","persistedStep":true,"persistReason":"synthetic","syntheticStep":true,"syntheticID":"msg_...","syntheticDelivery":"steer","injectedFirst":false,"injectedStep":true,"error":null}
+{"ts":"2026-10-21T09:16:26.365Z","kind":"first","sessionID":"ses_...","agent":"build","messageID":"msg_...","model":"opencode-go/deepseek-v4.1-flash","injectedFirst":true,"injectedStep":false,"reason":"injected","error":null}
 ```
 
 无事件且无错误时不写。

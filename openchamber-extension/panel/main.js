@@ -2513,6 +2513,10 @@ ${GUEST_UI_LOOK_CSS}`;
         return "\u5DF2\u8FFD\u52A0";
       case "already-persisted":
         return "\u5DF2\u5B58\u5728";
+      case "synthetic":
+        return "\u9690\u85CF\u6CE8\u5165";
+      case "synthetic-error":
+        return "\u9690\u85CF\u6CE8\u5165\u5931\u8D25";
       default:
         return value || "\u2014";
     }
@@ -2522,7 +2526,10 @@ ${GUEST_UI_LOOK_CSS}`;
     return row.agent ? `${base} \xB7 ${row.agent}` : base;
   }
   function injectionLabel(row) {
-    if (row.kind === "prompt") return row.persistedStep ? "S \u5DF2\u843D\u76D8" : "S \u672A\u843D\u76D8";
+    if (row.kind === "prompt") {
+      if (row.syntheticStep) return "S \u5DF2\u6CE8\u5165\uFF08\u9690\u85CF\uFF09";
+      return row.persistedStep ? "S \u5DF2\u843D\u76D8" : "S \u672A\u843D\u76D8";
+    }
     if (row.kind === "first") return row.injectedFirst ? "F \u5DF2\u6CE8\u5165" : "F \u672A\u6CE8\u5165";
     return [row.injectedFirst ? "F" : "", row.injectedStep ? "S" : ""].filter(Boolean).join("+") || "\u2014";
   }
@@ -2610,7 +2617,7 @@ ${GUEST_UI_LOOK_CSS}`;
     kpisEl.append(
       kpi("\u4ECA\u65E5\u4E8B\u4EF6", String(rows.length)),
       kpi("\u9996\u8F6E F", String(first), "\u6B21\u6CE8\u5165"),
-      kpi("S \u843D\u76D8", String(persisted), "\u6761\u7528\u6237\u6D88\u606F"),
+      kpi("S \u6CE8\u5165", String(persisted), "\u6761\u9690\u85CF\u6D88\u606F"),
       kpi("\u8DF3\u8FC7 F", String(skipped), skipped ? "\u6A21\u578B\u4E0D\u7B26/\u65E0\u6A21\u578B" : ""),
       kpi("\u9519\u8BEF", String(errors), errors ? "\u67E5\u770B\u8BCA\u65AD" : "")
     );
