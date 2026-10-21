@@ -32,10 +32,12 @@ type TabId = 'overview' | 'settings' | 'diagnostics';
 
 type Part = { enabled: boolean; agents: string[]; text: string };
 
+type FirstPart = Part & { models: string[] };
+
 type Config = {
   version: number;
   enabled: boolean;
-  first: Part;
+  first: FirstPart;
   step: Part;
   logging: { enabled: boolean; path: string };
 };
@@ -107,7 +109,7 @@ function emptyConfig(): Config {
   return {
     version: 2,
     enabled: false,
-    first: { enabled: false, agents: [], text: '' },
+    first: { enabled: false, agents: [], models: [], text: '' },
     step: { enabled: false, agents: [], text: '' },
     logging: { enabled: false, path: '' },
   };
@@ -136,13 +138,16 @@ function splitNames(value: string): string[] {
     .filter(Boolean);
 }
 
-function normalizePart(raw: unknown): Part {
+function normalizePart(raw: unknown, withModels = false): Part {
   const next: Part = { enabled: false, agents: [], text: '' };
   if (!raw || typeof raw !== 'object') return next;
   const value = raw as Record<string, unknown>;
   next.enabled = value.enabled === true;
   if (Array.isArray(value.agents)) next.agents = normalizeNames(value.agents);
   if (typeof value.text === 'string') next.text = value.text.trim();
+  if (withModels) {
+    (next as FirstPart).models = Array.isArray(value.models) ? normalizeNames(value.models) : [];
+  }
   return next;
 }
 
@@ -151,7 +156,7 @@ function normalizeConfig(raw: unknown): Config {
   if (!raw || typeof raw !== 'object') return next;
   const value = raw as Record<string, unknown>;
   next.enabled = value.enabled === true;
-  next.first = normalizePart(value.first);
+  next.first = normalizePart(value.first, true) as FirstPart;
   next.step = normalizePart(value.step);
   const logging = value.logging as Record<string, unknown> | undefined;
   if (logging && typeof logging === 'object') {
@@ -378,9 +383,10 @@ function previewText(): string {
   const first = draft.first.enabled ? values.first : '';
   const step = draft.step.enabled ? values.step : '';
   if (!first && !step) return '两段都为空：不注入任何内容，消息原样发送。';
+  const models = draft.first.models.length ? `（仅限模型：${draft.first.models.join(', ')}）` : '';
   const firstCall = [first, step].filter(Boolean).join('\n');
   return [
-    '首次调用（first + step）',
+    `首次调用（first + step）${models}`,
     firstCall || '（不注入）',
     '',
     '后续调用（step）',
@@ -467,6 +473,7 @@ function buildPartCard(
   title: string,
   badge: string,
   description: string,
+  showModels = false,
 ): HTMLElement {
   const part = draft[key];
   const card = el('div', 'settings-card');
@@ -500,6 +507,27 @@ function buildPartCard(
   agentRow.append(
     el('div', 'oc-sdk-field-note', '未勾选 = 对该 agent 不注入；全部不勾 = 这段关闭。'),
   );
+
+  if (showModels) {
+    const firstPart = part as FirstPart;
+    const modelRow = el('div', 'part-grid');
+    modelRow.append(el('span', 'row-label', '作用模型'));
+    const modelSlot = el('div');
+    modelRow.append(modelSlot);
+    body.append(modelRow);
+    mountTextField(modelSlot, {
+      label: '模型（provider/model）',
+      value: firstPart.models.join(', '),
+      placeholder: '例如 opencode-go/deepseek-v4.1-flash，逗号分隔',
+      helper: '留空 = 全部模型；填写后需 agent 和模型同时命中才注入 first',
+      onChange: (value) => {
+        firstPart.models = normalizeNames(splitNames(value));
+        markDirty();
+        updatePreview();
+      },
+    });
+    modelRow.append(el('div', 'oc-sdk-field-note', '只作用于 first；step 仍只看 agent。'));
+  }
 
   const textSlot = el('div');
   body.append(textSlot);
@@ -565,7 +593,8 @@ function buildSettings(): void {
       'first',
       '每轮首次注入',
       '每轮第一次',
-      '只在本轮第一次模型调用时追加，排在每步注入前面；文本为空就不加这一段。',
+      '只在本轮第一次模型调用时追加，需同时满足所选 agent 与模型；文本为空就不加这一段。',
+      true,
     ),
   );
 

@@ -35,9 +35,11 @@ type Part = {
   text: string
 }
 
+type FirstPart = Part & { models: string[] }
+
 type Config = {
   enabled: boolean
-  first: Part
+  first: FirstPart
   step: Part
   logging: { enabled: boolean; path: string }
 }
@@ -46,6 +48,7 @@ type TurnState = {
   messageID: string
   firstPending: boolean
   ts: number
+  model: string
 }
 
 const turns = new Map<string, TurnState>()
@@ -59,7 +62,7 @@ let configMtime = -1
 function emptyConfig(): Config {
   return {
     enabled: false,
-    first: { enabled: false, agents: [], text: "" },
+    first: { enabled: false, agents: [], models: [], text: "" },
     step: { enabled: false, agents: [], text: "" },
     logging: { enabled: false, path: "" },
   }
@@ -77,12 +80,25 @@ function normalizeAgents(value: any): string[] {
   return out
 }
 
-function normalizePart(raw: any): Part {
+function normalizeModels(value: any): string[] {
+  if (!Array.isArray(value)) return []
+  const out: string[] = []
+  for (const item of value) {
+    const model = String(item || "").trim().slice(0, 150)
+    if (!model || out.includes(model)) continue
+    out.push(model)
+    if (out.length >= 50) break
+  }
+  return out
+}
+
+function normalizePart(raw: any, withModels = false): Part {
   const part: Part = { enabled: false, agents: [], text: "" }
   if (!raw || typeof raw !== "object") return part
   part.enabled = raw.enabled === true
   part.agents = normalizeAgents(raw.agents)
   part.text = typeof raw.text === "string" ? raw.text.trim() : ""
+  if (withModels) (part as FirstPart).models = normalizeModels(raw.models)
   return part
 }
 
@@ -90,7 +106,7 @@ function normalizeConfig(raw: any): Config {
   const cfg = emptyConfig()
   if (!raw || typeof raw !== "object") return cfg
   cfg.enabled = raw.enabled === true
-  cfg.first = normalizePart(raw.first)
+  cfg.first = normalizePart(raw.first, true) as FirstPart
   cfg.step = normalizePart(raw.step)
   if (raw.logging && typeof raw.logging === "object") {
     cfg.logging.enabled = raw.logging.enabled === true
@@ -235,6 +251,52 @@ function partText(part: Part, agent: string): string {
   return part.text.trim()
 }
 
+function modelMatches(part: FirstPart, model: string): boolean {
+  if (!part.models.length) return true
+  if (!model) return false
+  const value = model.toLowerCase()
+  return part.models.some((item) => {
+    const wanted = item.toLowerCase()
+    if (!wanted) return false
+    if (value === wanted) return true
+    // A bare model id may be configured without the provider prefix.
+    if (!wanted.includes("/")) {
+      const tail = value.includes("/") ? value.slice(value.indexOf("/") + 1) : value
+      return tail === wanted
+    }
+    return false
+  })
+}
+
+async function resolveModel(ctx: any, sessionID: string, event: any): Promise<string> {
+  const candidates: any[] = []
+  if (event?.model !== undefined) candidates.push(event.model)
+  if (event?.modelID || event?.providerID) candidates.push(event)
+  try {
+    candidates.push(await ctx.session.get({ sessionID }))
+  } catch {
+    // Model is optional; first just will not match a configured list.
+  }
+  for (const item of candidates) {
+    if (!item) continue
+    if (typeof item === "string") {
+      const text = item.trim()
+      if (text) return text
+      continue
+    }
+    const nested = item.model && typeof item.model === "object" ? item.model : null
+    const provider = String(
+      item.providerID || nested?.providerID || item.provider?.id || item.provider || "",
+    ).trim()
+    const model = String(
+      nested?.modelID || nested?.id || item.modelID || (provider && typeof item.id === "string" ? item.id : ""),
+    ).trim()
+    if (provider && model) return `${provider}/${model}`
+    if (model) return model
+  }
+  return ""
+}
+
 async function resolveSession(
   ctx: any,
   sessionID: string,
@@ -279,7 +341,8 @@ async function onPrompt(ctx: any, event: any): Promise<void> {
 
     // A new prompt starts a new turn; the first model call of that turn carries
     // the "first" reminder once.
-    turns.set(sessionID, { messageID, firstPending: true, ts: Date.now() })
+    const model = await resolveModel(ctx, sessionID, event)
+    turns.set(sessionID, { messageID, firstPending: true, ts: Date.now(), model })
   } catch {
     // Never block the prompt.
   }
@@ -320,7 +383,15 @@ async function onContext(ctx: any, event: any): Promise<void> {
     // stay out of it instead of mistaking it for a new question.
     if (!state || !state.messageID || !currentID || state.messageID !== currentID) return
 
-    const isFirst = state.firstPending && Date.now() - state.ts <= TURN_TTL_MS
+    const firstPending = state.firstPending && Date.now() - state.ts <= TURN_TTL_MS
+    const firstAllowed = !!partText(cfg.first, agent) && modelMatches(cfg.first, state.model)
+    const isFirst = firstPending && firstAllowed
+
+    // The first call of a turn is spent even when the model does not match:
+    // a mid-turn model switch must not make first appear on a later call.
+    if (firstPending && !firstAllowed) {
+      turns.set(sessionID, { ...state, firstPending: false, ts: Date.now() })
+    }
 
     const firstText = partText(cfg.first, agent)
     const stepText = partText(cfg.step, agent)
@@ -348,6 +419,7 @@ async function onContext(ctx: any, event: any): Promise<void> {
           messageID: currentID || state?.messageID || "",
           firstPending: false,
           ts: Date.now(),
+          model: state.model,
         })
       }
     } catch (err) {

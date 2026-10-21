@@ -2104,7 +2104,7 @@ ${GUEST_UI_LOOK_CSS}`;
     return {
       version: 2,
       enabled: false,
-      first: { enabled: false, agents: [], text: "" },
+      first: { enabled: false, agents: [], models: [], text: "" },
       step: { enabled: false, agents: [], text: "" },
       logging: { enabled: false, path: "" }
     };
@@ -2126,13 +2126,16 @@ ${GUEST_UI_LOOK_CSS}`;
   function splitNames(value) {
     return String(value || "").split(/[,，、\s]+/).map((name) => name.trim()).filter(Boolean);
   }
-  function normalizePart(raw) {
+  function normalizePart(raw, withModels = false) {
     const next = { enabled: false, agents: [], text: "" };
     if (!raw || typeof raw !== "object") return next;
     const value = raw;
     next.enabled = value.enabled === true;
     if (Array.isArray(value.agents)) next.agents = normalizeNames(value.agents);
     if (typeof value.text === "string") next.text = value.text.trim();
+    if (withModels) {
+      next.models = Array.isArray(value.models) ? normalizeNames(value.models) : [];
+    }
     return next;
   }
   function normalizeConfig(raw) {
@@ -2140,7 +2143,7 @@ ${GUEST_UI_LOOK_CSS}`;
     if (!raw || typeof raw !== "object") return next;
     const value = raw;
     next.enabled = value.enabled === true;
-    next.first = normalizePart(value.first);
+    next.first = normalizePart(value.first, true);
     next.step = normalizePart(value.step);
     const logging = value.logging;
     if (logging && typeof logging === "object") {
@@ -2338,9 +2341,10 @@ ${GUEST_UI_LOOK_CSS}`;
     const first = draft.first.enabled ? values.first : "";
     const step = draft.step.enabled ? values.step : "";
     if (!first && !step) return "\u4E24\u6BB5\u90FD\u4E3A\u7A7A\uFF1A\u4E0D\u6CE8\u5165\u4EFB\u4F55\u5185\u5BB9\uFF0C\u6D88\u606F\u539F\u6837\u53D1\u9001\u3002";
+    const models = draft.first.models.length ? `\uFF08\u4EC5\u9650\u6A21\u578B\uFF1A${draft.first.models.join(", ")}\uFF09` : "";
     const firstCall = [first, step].filter(Boolean).join("\n");
     return [
-      "\u9996\u6B21\u8C03\u7528\uFF08first + step\uFF09",
+      `\u9996\u6B21\u8C03\u7528\uFF08first + step\uFF09${models}`,
       firstCall || "\uFF08\u4E0D\u6CE8\u5165\uFF09",
       "",
       "\u540E\u7EED\u8C03\u7528\uFF08step\uFF09",
@@ -2416,7 +2420,7 @@ ${GUEST_UI_LOOK_CSS}`;
       }
     });
   }
-  function buildPartCard(key, title, badge, description) {
+  function buildPartCard(key, title, badge, description, showModels = false) {
     const part = draft[key];
     const card = el2("div", "settings-card");
     card.append(sectionHead(title, badge, "green"));
@@ -2446,6 +2450,26 @@ ${GUEST_UI_LOOK_CSS}`;
     agentRow.append(
       el2("div", "oc-sdk-field-note", "\u672A\u52FE\u9009 = \u5BF9\u8BE5 agent \u4E0D\u6CE8\u5165\uFF1B\u5168\u90E8\u4E0D\u52FE = \u8FD9\u6BB5\u5173\u95ED\u3002")
     );
+    if (showModels) {
+      const firstPart = part;
+      const modelRow = el2("div", "part-grid");
+      modelRow.append(el2("span", "row-label", "\u4F5C\u7528\u6A21\u578B"));
+      const modelSlot = el2("div");
+      modelRow.append(modelSlot);
+      body.append(modelRow);
+      mountTextField(modelSlot, {
+        label: "\u6A21\u578B\uFF08provider/model\uFF09",
+        value: firstPart.models.join(", "),
+        placeholder: "\u4F8B\u5982 opencode-go/deepseek-v4.1-flash\uFF0C\u9017\u53F7\u5206\u9694",
+        helper: "\u7559\u7A7A = \u5168\u90E8\u6A21\u578B\uFF1B\u586B\u5199\u540E\u9700 agent \u548C\u6A21\u578B\u540C\u65F6\u547D\u4E2D\u624D\u6CE8\u5165 first",
+        onChange: (value) => {
+          firstPart.models = normalizeNames(splitNames(value));
+          markDirty();
+          updatePreview();
+        }
+      });
+      modelRow.append(el2("div", "oc-sdk-field-note", "\u53EA\u4F5C\u7528\u4E8E first\uFF1Bstep \u4ECD\u53EA\u770B agent\u3002"));
+    }
     const textSlot = el2("div");
     body.append(textSlot);
     const field = mountTextField(textSlot, {
@@ -2504,7 +2528,8 @@ ${GUEST_UI_LOOK_CSS}`;
         "first",
         "\u6BCF\u8F6E\u9996\u6B21\u6CE8\u5165",
         "\u6BCF\u8F6E\u7B2C\u4E00\u6B21",
-        "\u53EA\u5728\u672C\u8F6E\u7B2C\u4E00\u6B21\u6A21\u578B\u8C03\u7528\u65F6\u8FFD\u52A0\uFF0C\u6392\u5728\u6BCF\u6B65\u6CE8\u5165\u524D\u9762\uFF1B\u6587\u672C\u4E3A\u7A7A\u5C31\u4E0D\u52A0\u8FD9\u4E00\u6BB5\u3002"
+        "\u53EA\u5728\u672C\u8F6E\u7B2C\u4E00\u6B21\u6A21\u578B\u8C03\u7528\u65F6\u8FFD\u52A0\uFF0C\u9700\u540C\u65F6\u6EE1\u8DB3\u6240\u9009 agent \u4E0E\u6A21\u578B\uFF1B\u6587\u672C\u4E3A\u7A7A\u5C31\u4E0D\u52A0\u8FD9\u4E00\u6BB5\u3002",
+        true
       )
     );
     settingsPage.append(
