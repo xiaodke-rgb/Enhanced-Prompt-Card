@@ -293,39 +293,13 @@ function fmtPct(value: number): string {
   return `${Math.round(value * 100)}%`;
 }
 
-function reasonLabel(value?: string): string {
-  switch (value) {
-    case 'injected':
-      return '已注入';
-    case 'model-mismatch':
-      return '模型不符';
-    case 'no-model':
-      return '未取到模型';
-    case 'appended':
-      return '已追加';
-    case 'already-persisted':
-      return '已存在';
-    case 'synthetic':
-      return '隐藏注入';
-    case 'synthetic-error':
-      return '隐藏注入失败';
-    default:
-      return value || '—';
-  }
-}
-
-function eventKindLabel(row: EventRow): string {
-  const base = row.kind === 'prompt' ? '用户消息' : row.kind === 'first' ? '首轮调用' : '旧记录';
-  return row.agent ? `${base} · ${row.agent}` : base;
-}
-
 function injectionLabel(row: EventRow): string {
-  if (row.kind === 'prompt') {
-    if (row.syntheticStep) return 'S 已注入（隐藏）';
-    return row.persistedStep ? 'S 已落盘' : 'S 未落盘';
-  }
   if (row.kind === 'first') return row.injectedFirst ? 'F 已注入' : 'F 未注入';
-  return [row.injectedFirst ? 'F' : '', row.injectedStep ? 'S' : ''].filter(Boolean).join('+') || '—';
+  if (row.kind === 'prompt') {
+    return row.syntheticStep || row.persistedStep || row.injectedStep ? 'S 已注入' : 'S 未注入';
+  }
+  if (row.injectedFirst) return 'F 已注入';
+  return row.syntheticStep || row.persistedStep || row.injectedStep ? 'S 已注入' : 'S 未注入';
 }
 
 function setBanner(tone: 'info' | 'warning' | 'error', title: string, body: string): void {
@@ -366,10 +340,8 @@ function settingsNote(text: string): HTMLElement {
 
 const EVENT_COLUMNS: Array<{ label: string; width: string }> = [
   { label: '时间', width: '96px' },
-  { label: '类型', width: '120px' },
   { label: '会话', width: 'auto' },
-  { label: '结果', width: '100px' },
-  { label: '原因', width: '96px' },
+  { label: '结果', width: '110px' },
   { label: '模型', width: 'auto' },
   { label: '错误', width: '110px' },
 ];
@@ -394,10 +366,8 @@ function eventTable(rows: EventRow[]): HTMLElement {
     session.title = row.sessionID || '';
     tr.append(
       el('td', 'num', fmtDayTime(row.ts)),
-      el('td', '', eventKindLabel(row)),
       session,
       el('td', row.error ? 'bad' : 'ok', injectionLabel(row)),
-      el('td', row.error ? 'bad' : '', reasonLabel(row.reason || row.persistReason)),
       el('td', 'mono', row.model || '—'),
       el('td', row.error ? 'bad' : '', row.error || ''),
     );
@@ -410,9 +380,14 @@ function eventTable(rows: EventRow[]): HTMLElement {
 
 function renderOverview(): void {
   const rows = todayRows();
-  const first = rows.filter((row) => Boolean(row.injectedFirst)).length;
-  const persisted = rows.filter((row) => Boolean(row.persistedStep)).length;
-  const skipped = rows.filter((row) => row.reason === 'model-mismatch' || row.reason === 'no-model').length;
+  const firstInjected = rows.filter((row) => row.kind === 'first' && row.injectedFirst).length;
+  const firstMissed = rows.filter((row) => row.kind === 'first' && !row.injectedFirst).length;
+  const stepInjected = rows.filter(
+    (row) => row.kind === 'prompt' && (row.syntheticStep || row.persistedStep || row.injectedStep),
+  ).length;
+  const stepMissed = rows.filter(
+    (row) => row.kind === 'prompt' && !(row.syntheticStep || row.persistedStep || row.injectedStep),
+  ).length;
   const errors = rows.filter((row) => !!row.error).length;
 
   statusPillEl.textContent = config.enabled ? 'Active' : 'Inactive';
@@ -421,9 +396,10 @@ function renderOverview(): void {
   kpisEl.textContent = '';
   kpisEl.append(
     kpi('今日事件', String(rows.length)),
-    kpi('首轮 F', String(first), '次注入'),
-    kpi('S 注入', String(persisted), '条隐藏消息'),
-    kpi('跳过 F', String(skipped), skipped ? '模型不符/无模型' : ''),
+    kpi('F 已注入', String(firstInjected)),
+    kpi('F 未注入', String(firstMissed)),
+    kpi('S 已注入', String(stepInjected)),
+    kpi('S 未注入', String(stepMissed)),
     kpi('错误', String(errors), errors ? '查看诊断' : ''),
   );
 

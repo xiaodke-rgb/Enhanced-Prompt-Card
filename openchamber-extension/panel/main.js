@@ -2501,37 +2501,13 @@ ${GUEST_UI_LOOK_CSS}`;
     if (!date) return "\u2014";
     return date.toLocaleString("zh-CN", { month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit" });
   }
-  function reasonLabel(value) {
-    switch (value) {
-      case "injected":
-        return "\u5DF2\u6CE8\u5165";
-      case "model-mismatch":
-        return "\u6A21\u578B\u4E0D\u7B26";
-      case "no-model":
-        return "\u672A\u53D6\u5230\u6A21\u578B";
-      case "appended":
-        return "\u5DF2\u8FFD\u52A0";
-      case "already-persisted":
-        return "\u5DF2\u5B58\u5728";
-      case "synthetic":
-        return "\u9690\u85CF\u6CE8\u5165";
-      case "synthetic-error":
-        return "\u9690\u85CF\u6CE8\u5165\u5931\u8D25";
-      default:
-        return value || "\u2014";
-    }
-  }
-  function eventKindLabel(row) {
-    const base = row.kind === "prompt" ? "\u7528\u6237\u6D88\u606F" : row.kind === "first" ? "\u9996\u8F6E\u8C03\u7528" : "\u65E7\u8BB0\u5F55";
-    return row.agent ? `${base} \xB7 ${row.agent}` : base;
-  }
   function injectionLabel(row) {
-    if (row.kind === "prompt") {
-      if (row.syntheticStep) return "S \u5DF2\u6CE8\u5165\uFF08\u9690\u85CF\uFF09";
-      return row.persistedStep ? "S \u5DF2\u843D\u76D8" : "S \u672A\u843D\u76D8";
-    }
     if (row.kind === "first") return row.injectedFirst ? "F \u5DF2\u6CE8\u5165" : "F \u672A\u6CE8\u5165";
-    return [row.injectedFirst ? "F" : "", row.injectedStep ? "S" : ""].filter(Boolean).join("+") || "\u2014";
+    if (row.kind === "prompt") {
+      return row.syntheticStep || row.persistedStep || row.injectedStep ? "S \u5DF2\u6CE8\u5165" : "S \u672A\u6CE8\u5165";
+    }
+    if (row.injectedFirst) return "F \u5DF2\u6CE8\u5165";
+    return row.syntheticStep || row.persistedStep || row.injectedStep ? "S \u5DF2\u6CE8\u5165" : "S \u672A\u6CE8\u5165";
   }
   function setBanner(tone2, title, body) {
     if (bannerHandle) {
@@ -2565,10 +2541,8 @@ ${GUEST_UI_LOOK_CSS}`;
   }
   var EVENT_COLUMNS = [
     { label: "\u65F6\u95F4", width: "96px" },
-    { label: "\u7C7B\u578B", width: "120px" },
     { label: "\u4F1A\u8BDD", width: "auto" },
-    { label: "\u7ED3\u679C", width: "100px" },
-    { label: "\u539F\u56E0", width: "96px" },
+    { label: "\u7ED3\u679C", width: "110px" },
     { label: "\u6A21\u578B", width: "auto" },
     { label: "\u9519\u8BEF", width: "110px" }
   ];
@@ -2592,10 +2566,8 @@ ${GUEST_UI_LOOK_CSS}`;
       session.title = row.sessionID || "";
       tr.append(
         el2("td", "num", fmtDayTime(row.ts)),
-        el2("td", "", eventKindLabel(row)),
         session,
         el2("td", row.error ? "bad" : "ok", injectionLabel(row)),
-        el2("td", row.error ? "bad" : "", reasonLabel(row.reason || row.persistReason)),
         el2("td", "mono", row.model || "\u2014"),
         el2("td", row.error ? "bad" : "", row.error || "")
       );
@@ -2607,18 +2579,24 @@ ${GUEST_UI_LOOK_CSS}`;
   }
   function renderOverview() {
     const rows = todayRows();
-    const first = rows.filter((row) => Boolean(row.injectedFirst)).length;
-    const persisted = rows.filter((row) => Boolean(row.persistedStep)).length;
-    const skipped = rows.filter((row) => row.reason === "model-mismatch" || row.reason === "no-model").length;
+    const firstInjected = rows.filter((row) => row.kind === "first" && row.injectedFirst).length;
+    const firstMissed = rows.filter((row) => row.kind === "first" && !row.injectedFirst).length;
+    const stepInjected = rows.filter(
+      (row) => row.kind === "prompt" && (row.syntheticStep || row.persistedStep || row.injectedStep)
+    ).length;
+    const stepMissed = rows.filter(
+      (row) => row.kind === "prompt" && !(row.syntheticStep || row.persistedStep || row.injectedStep)
+    ).length;
     const errors = rows.filter((row) => !!row.error).length;
     statusPillEl.textContent = config.enabled ? "Active" : "Inactive";
     statusPillEl.classList.toggle("off", !config.enabled);
     kpisEl.textContent = "";
     kpisEl.append(
       kpi("\u4ECA\u65E5\u4E8B\u4EF6", String(rows.length)),
-      kpi("\u9996\u8F6E F", String(first), "\u6B21\u6CE8\u5165"),
-      kpi("S \u6CE8\u5165", String(persisted), "\u6761\u9690\u85CF\u6D88\u606F"),
-      kpi("\u8DF3\u8FC7 F", String(skipped), skipped ? "\u6A21\u578B\u4E0D\u7B26/\u65E0\u6A21\u578B" : ""),
+      kpi("F \u5DF2\u6CE8\u5165", String(firstInjected)),
+      kpi("F \u672A\u6CE8\u5165", String(firstMissed)),
+      kpi("S \u5DF2\u6CE8\u5165", String(stepInjected)),
+      kpi("S \u672A\u6CE8\u5165", String(stepMissed)),
       kpi("\u9519\u8BEF", String(errors), errors ? "\u67E5\u770B\u8BCA\u65AD" : "")
     );
     recentEl.textContent = "";
