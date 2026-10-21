@@ -136,7 +136,7 @@ function loadConfig(): Config {
 
 // Write a compact catalog for the panel's model picker. OpenCode keeps the full
 // catalog in a multi-megabyte cache, which is too large for the panel's file
-// read limit; the plugin reads it locally and narrows it to configured providers.
+// read limit; the plugin narrows it to the models enabled in opencode.json.
 function syncModelCatalog(): void {
   try {
     const catalog = JSON.parse(readFileSync(MODELS_SOURCE_PATH, "utf8"))
@@ -146,9 +146,10 @@ function syncModelCatalog(): void {
     const models: Array<{ id: string; name: string; provider: string; providerName: string }> = []
     for (const provider of providers) {
       const entry = catalog?.[provider]
-      const list = entry?.models
-      if (!list || typeof list !== "object") continue
-      for (const [key, meta] of Object.entries<any>(list)) {
+      const configured = config?.providers?.[provider]?.models
+      if (!configured || typeof configured !== "object") continue
+      for (const key of Object.keys(configured)) {
+        const meta = entry?.models?.[key] || configured[key] || {}
         models.push({
           id: `${provider}/${key}`,
           name: String(meta?.name || key),
