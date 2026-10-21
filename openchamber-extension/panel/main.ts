@@ -453,8 +453,8 @@ function previewText(): string {
   if (!first && !step) return '两段都为空：不注入任何内容，消息原样发送。';
   const models = draft.first.models.length ? `（仅限模型：${draft.first.models.join(', ')}）` : '';
   return [
-    '用户消息（S 落盘）',
-    step || '（不落盘）',
+    '用户消息前（S 隐藏注入）',
+    step || '（不注入）',
     '',
     `首轮调用（临时 F）${models}`,
     first || '（不注入）',
@@ -724,7 +724,7 @@ function buildSettings(): void {
   const pathRow = el('div', 'setting-row');
   pathRow.append(el('span', 'row-label', '路径'), el('div', 'setting-value', draft.logging.path));
   logBody.append(pathRow);
-  logCard.append(logBody, settingsNote('用户消息落盘记一条，首轮临时注入再记一条；没有事件时不写。'));
+  logCard.append(logBody, settingsNote('用户消息提交时记一条（S 隐藏注入），首轮临时注入再记一条；没有事件时不写。'));
   settingsPage.append(logCard);
 
   let logSwitch: ReturnType<typeof mountSwitch> | null = null;
@@ -774,7 +774,7 @@ function renderDiagnostics(): void {
   diagSummaryEl.textContent = eventError
     ? eventError
     : events.length
-      ? `诊断事件 ${events.length} 条 · 用户消息落盘 + 首轮调用`
+      ? `诊断事件 ${events.length} 条 · S 隐藏注入 + 首轮调用`
       : '诊断事件 0 条 · 插件产生第一轮后会出现';
   diagSummaryEl.classList.add('foot');
 
@@ -844,7 +844,7 @@ function buildDom(): void {
     el(
       'div',
       'hd-desc',
-      '为所选 agent 追加两段提醒：S 落盘到用户消息，F 只在首轮调用临时注入\n不修改工具结果、不发第二条消息。',
+      '为所选 agent 追加两段提醒：S 作为隐藏消息排在用户消息前，F 只在首轮调用临时注入\n不修改工具结果，不把 S 拼进用户消息。',
     ),
   );
   root.append(hd);
@@ -1012,7 +1012,7 @@ async function bootMock(): Promise<void> {
   const now = Date.now();
   const session = 'ses_3e342829-9df5-4bda-b5d0-428ada3ab8b8';
   events = [
-    { kind: 'prompt', ts: new Date(now - 4 * 60e3).toISOString(), sessionID: session, agent: 'plan', persistedStep: true, persistReason: 'appended', injectedFirst: false, injectedStep: true, error: null },
+    { kind: 'prompt', ts: new Date(now - 4 * 60e3).toISOString(), sessionID: session, agent: 'plan', persistedStep: true, persistReason: 'synthetic', syntheticStep: true, injectedFirst: false, injectedStep: true, error: null },
     { kind: 'first', ts: new Date(now - 4 * 60e3 + 80).toISOString(), sessionID: session, agent: 'plan', injectedFirst: true, reason: 'injected', model: 'deepseek/deepseek-flash', error: null },
     { kind: 'prompt', ts: new Date(now - 26 * 60e3).toISOString(), sessionID: 'ses_71a0c4de-2b46-4d7a-9c19-0f5c2b7d8e11', agent: 'build', persistedStep: true, persistReason: 'already-persisted', injectedFirst: false, injectedStep: true, error: null },
     { kind: 'first', ts: new Date(now - 26 * 60e3 + 80).toISOString(), sessionID: 'ses_71a0c4de-2b46-4d7a-9c19-0f5c2b7d8e11', agent: 'build', injectedFirst: false, reason: 'model-mismatch', model: 'opencode-go/grok-4.7', error: null },

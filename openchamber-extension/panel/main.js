@@ -2642,8 +2642,8 @@ ${GUEST_UI_LOOK_CSS}`;
     if (!first && !step) return "\u4E24\u6BB5\u90FD\u4E3A\u7A7A\uFF1A\u4E0D\u6CE8\u5165\u4EFB\u4F55\u5185\u5BB9\uFF0C\u6D88\u606F\u539F\u6837\u53D1\u9001\u3002";
     const models = draft.first.models.length ? `\uFF08\u4EC5\u9650\u6A21\u578B\uFF1A${draft.first.models.join(", ")}\uFF09` : "";
     return [
-      "\u7528\u6237\u6D88\u606F\uFF08S \u843D\u76D8\uFF09",
-      step || "\uFF08\u4E0D\u843D\u76D8\uFF09",
+      "\u7528\u6237\u6D88\u606F\u524D\uFF08S \u9690\u85CF\u6CE8\u5165\uFF09",
+      step || "\uFF08\u4E0D\u6CE8\u5165\uFF09",
       "",
       `\u9996\u8F6E\u8C03\u7528\uFF08\u4E34\u65F6 F\uFF09${models}`,
       first || "\uFF08\u4E0D\u6CE8\u5165\uFF09"
@@ -2885,7 +2885,7 @@ ${GUEST_UI_LOOK_CSS}`;
     const pathRow = el2("div", "setting-row");
     pathRow.append(el2("span", "row-label", "\u8DEF\u5F84"), el2("div", "setting-value", draft.logging.path));
     logBody.append(pathRow);
-    logCard.append(logBody, settingsNote("\u7528\u6237\u6D88\u606F\u843D\u76D8\u8BB0\u4E00\u6761\uFF0C\u9996\u8F6E\u4E34\u65F6\u6CE8\u5165\u518D\u8BB0\u4E00\u6761\uFF1B\u6CA1\u6709\u4E8B\u4EF6\u65F6\u4E0D\u5199\u3002"));
+    logCard.append(logBody, settingsNote("\u7528\u6237\u6D88\u606F\u63D0\u4EA4\u65F6\u8BB0\u4E00\u6761\uFF08S \u9690\u85CF\u6CE8\u5165\uFF09\uFF0C\u9996\u8F6E\u4E34\u65F6\u6CE8\u5165\u518D\u8BB0\u4E00\u6761\uFF1B\u6CA1\u6709\u4E8B\u4EF6\u65F6\u4E0D\u5199\u3002"));
     settingsPage.append(logCard);
     let logSwitch = null;
     logSwitch = mountSwitch(logSwitchSlot, {
@@ -2931,7 +2931,7 @@ ${GUEST_UI_LOOK_CSS}`;
     );
   }
   function renderDiagnostics() {
-    diagSummaryEl.textContent = eventError ? eventError : events.length ? `\u8BCA\u65AD\u4E8B\u4EF6 ${events.length} \u6761 \xB7 \u7528\u6237\u6D88\u606F\u843D\u76D8 + \u9996\u8F6E\u8C03\u7528` : "\u8BCA\u65AD\u4E8B\u4EF6 0 \u6761 \xB7 \u63D2\u4EF6\u4EA7\u751F\u7B2C\u4E00\u8F6E\u540E\u4F1A\u51FA\u73B0";
+    diagSummaryEl.textContent = eventError ? eventError : events.length ? `\u8BCA\u65AD\u4E8B\u4EF6 ${events.length} \u6761 \xB7 S \u9690\u85CF\u6CE8\u5165 + \u9996\u8F6E\u8C03\u7528` : "\u8BCA\u65AD\u4E8B\u4EF6 0 \u6761 \xB7 \u63D2\u4EF6\u4EA7\u751F\u7B2C\u4E00\u8F6E\u540E\u4F1A\u51FA\u73B0";
     diagSummaryEl.classList.add("foot");
     diagTableEl.textContent = "";
     if (!events.length) {
@@ -2991,7 +2991,7 @@ ${GUEST_UI_LOOK_CSS}`;
       el2(
         "div",
         "hd-desc",
-        "\u4E3A\u6240\u9009 agent \u8FFD\u52A0\u4E24\u6BB5\u63D0\u9192\uFF1AS \u843D\u76D8\u5230\u7528\u6237\u6D88\u606F\uFF0CF \u53EA\u5728\u9996\u8F6E\u8C03\u7528\u4E34\u65F6\u6CE8\u5165\n\u4E0D\u4FEE\u6539\u5DE5\u5177\u7ED3\u679C\u3001\u4E0D\u53D1\u7B2C\u4E8C\u6761\u6D88\u606F\u3002"
+        "\u4E3A\u6240\u9009 agent \u8FFD\u52A0\u4E24\u6BB5\u63D0\u9192\uFF1AS \u4F5C\u4E3A\u9690\u85CF\u6D88\u606F\u6392\u5728\u7528\u6237\u6D88\u606F\u524D\uFF0CF \u53EA\u5728\u9996\u8F6E\u8C03\u7528\u4E34\u65F6\u6CE8\u5165\n\u4E0D\u4FEE\u6539\u5DE5\u5177\u7ED3\u679C\uFF0C\u4E0D\u628A S \u62FC\u8FDB\u7528\u6237\u6D88\u606F\u3002"
       )
     );
     root.append(hd);
@@ -3134,7 +3134,7 @@ ${GUEST_UI_LOOK_CSS}`;
     const now = Date.now();
     const session = "ses_3e342829-9df5-4bda-b5d0-428ada3ab8b8";
     events = [
-      { kind: "prompt", ts: new Date(now - 4 * 6e4).toISOString(), sessionID: session, agent: "plan", persistedStep: true, persistReason: "appended", injectedFirst: false, injectedStep: true, error: null },
+      { kind: "prompt", ts: new Date(now - 4 * 6e4).toISOString(), sessionID: session, agent: "plan", persistedStep: true, persistReason: "synthetic", syntheticStep: true, injectedFirst: false, injectedStep: true, error: null },
       { kind: "first", ts: new Date(now - 4 * 6e4 + 80).toISOString(), sessionID: session, agent: "plan", injectedFirst: true, reason: "injected", model: "deepseek/deepseek-flash", error: null },
       { kind: "prompt", ts: new Date(now - 26 * 6e4).toISOString(), sessionID: "ses_71a0c4de-2b46-4d7a-9c19-0f5c2b7d8e11", agent: "build", persistedStep: true, persistReason: "already-persisted", injectedFirst: false, injectedStep: true, error: null },
       { kind: "first", ts: new Date(now - 26 * 6e4 + 80).toISOString(), sessionID: "ses_71a0c4de-2b46-4d7a-9c19-0f5c2b7d8e11", agent: "build", injectedFirst: false, reason: "model-mismatch", model: "opencode-go/grok-4.7", error: null },
