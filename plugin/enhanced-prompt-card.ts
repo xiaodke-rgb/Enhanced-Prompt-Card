@@ -134,16 +134,29 @@ function loadConfig(): Config {
   }
 }
 
-// Write a compact catalog for the panel's model picker. OpenCode keeps the full
-// catalog in a multi-megabyte cache, which is too large for the panel's file
-// read limit; the plugin narrows it to the models enabled in opencode.json.
-function syncModelCatalog(): void {
+// Write a compact catalog for the panel's model picker. Prefer the runtime
+// provider list (the same source OpenCode's own model picker uses); fall back
+// to the models enabled in opencode.json when the runtime API is unavailable.
+async function syncModelCatalog(ctx: any): Promise<void> {
+  try {
+    const runtime = await fetchRuntimeModels(ctx)
+    if (runtime) {
+      const names = await providerNames(ctx)
+      const models = modelsFromRuntime(runtime, names)
+      if (models.length) {
+        writeModels(models, "runtime")
+        return
+      }
+    }
+  } catch {
+    // Fall through to the config file.
+  }
   try {
     const catalog = JSON.parse(readFileSync(MODELS_SOURCE_PATH, "utf8"))
     const config = JSON.parse(readFileSync(OPENCODE_CONFIG_PATH, "utf8"))
     const providers = Object.keys(config?.providers || {})
     if (!providers.length) return
-    const models: Array<{ id: string; name: string; provider: string; providerName: string }> = []
+    const models: ModelEntry[] = []
     for (const provider of providers) {
       const entry = catalog?.[provider]
       const configured = config?.providers?.[provider]?.models
@@ -159,16 +172,68 @@ function syncModelCatalog(): void {
       }
     }
     if (!models.length) return
-    models.sort(
-      (a, b) => a.providerName.localeCompare(b.providerName) || a.id.localeCompare(b.id),
-    )
-    writeFileSync(
-      MODELS_CACHE_PATH,
-      JSON.stringify({ version: 1, generatedAt: new Date().toISOString(), models }) + "\n",
-    )
+    writeModels(models, "config")
   } catch {
     // The panel simply shows no options when the catalog cannot be built.
   }
+}
+
+async function fetchRuntimeModels(ctx: any): Promise<any[] | null> {
+  try {
+    const result = await ctx?.model?.list?.()
+    const body = result?.data ?? result
+    if (Array.isArray(body) && body.length) return body
+  } catch {
+    // Fall back to the config file.
+  }
+  return null
+}
+
+async function providerNames(ctx: any): Promise<Map<string, string>> {
+  const names = new Map<string, string>()
+  try {
+    const result = await ctx?.provider?.list?.()
+    const body = result?.data ?? result
+    if (Array.isArray(body)) {
+      for (const provider of body) {
+        names.set(String(provider?.id || ""), String(provider?.name || provider?.id || ""))
+      }
+    }
+  } catch {
+    // Provider names are cosmetic.
+  }
+  return names
+}
+
+type ModelEntry = { id: string; name: string; provider: string; providerName: string }
+
+function modelsFromRuntime(list: any[], names: Map<string, string>): ModelEntry[] {
+  const seen = new Set<string>()
+  const models: ModelEntry[] = []
+  for (const item of list) {
+    if (item?.enabled === false) continue
+    const providerID = String(item?.providerID || item?.provider?.id || "")
+    const modelID = String(item?.modelID || item?.id || "")
+    if (!providerID || !modelID) continue
+    const id = `${providerID}/${modelID}`
+    if (seen.has(id)) continue
+    seen.add(id)
+    models.push({
+      id,
+      name: String(item?.name || modelID),
+      provider: providerID,
+      providerName: names.get(providerID) || providerID,
+    })
+  }
+  return models
+}
+
+function writeModels(models: ModelEntry[], source: "runtime" | "config"): void {
+  models.sort((a, b) => a.providerName.localeCompare(b.providerName) || a.id.localeCompare(b.id))
+  writeFileSync(
+    MODELS_CACHE_PATH,
+    JSON.stringify({ version: 1, source, generatedAt: new Date().toISOString(), models }) + "\n",
+  )
 }
 
 function expandPath(path: string): string {
@@ -484,7 +549,7 @@ async function onContext(ctx: any, event: any): Promise<void> {
 export default {
   id: "enhanced-prompt-card",
   async setup(ctx: any) {
-    syncModelCatalog()
+    await syncModelCatalog(ctx)
     await ctx.session.hook("prompt", (event: any) => onPrompt(ctx, event))
     await ctx.session.hook("context", (event: any) => onContext(ctx, event))
   },
