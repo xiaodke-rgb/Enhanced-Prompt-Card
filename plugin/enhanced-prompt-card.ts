@@ -1,15 +1,13 @@
-// Enhanced Prompt Card — two reminders appended to the current user message of a
-// top-level turn, in the request copy only.
+// Enhanced Prompt Card — one persisted discipline reminder plus one temporary
+// first-turn reminder, top-level turns only.
 //
-// first ("每轮首次注入") lands on the first model call of a user turn.
-// step  ("每步注入")     lands on every model call of that turn, first included.
+// step  ("每步注入")   is appended to the canonical user input by the prompt
+// hook, so it is stored in history and every model call of the turn sees it.
+// first ("每轮首次注入") is appended to the request copy only, on the turn's
+// first model call; it is never persisted.
 //
-// The plugin only intercepts and assembles. It adds no text of its own: an empty
-// part means no content, and when no part applies `event.messages` is untouched.
-//
-// Nothing is persisted: the overlay is appended to a cloned copy of the user
-// message in `event.messages`, never to the stored prompt, never as a second user
-// message, and never after assistant/tool output.
+// Nothing else is touched: tool results, subagent messages and compaction
+// checkpoints are left alone. An empty part means no content.
 //
 // Failure policy: fail open. Any unexpected error means "no injection".
 
@@ -24,8 +22,6 @@ const OPENCODE_CONFIG_PATH = join(homedir(), ".config/opencode/opencode.json")
 
 const SESSION_TTL_MS = 60_000
 const TURN_TTL_MS = 10 * 60_000
-
-const LEGACY_MARKERS = ["[本轮提醒]", "[本轮意图]"]
 
 // OpenCode projects a compaction summary into a plain `role: "user"` message
 // whose content starts with this tag. It is not a prompt and carries its own ID,
@@ -51,7 +47,6 @@ type TurnState = {
   messageID: string
   firstPending: boolean
   ts: number
-  model: string
 }
 
 const turns = new Map<string, TurnState>()
@@ -277,77 +272,51 @@ function isSynthetic(message: any): boolean {
   return text.startsWith("<system-reminder>") || text.startsWith(CHECKPOINT_PREFIX)
 }
 
-function isInjectedPart(part: any, snippets: string[]): boolean {
-  const text = String(part?.text || "")
-  if (!text) return false
-  for (const marker of LEGACY_MARKERS) {
-    if (text.includes(marker)) return true
-  }
-  const trimmed = text.trim()
-  if (!trimmed) return false
-  for (const snippet of snippets) {
-    if (trimmed === snippet || trimmed.endsWith("\n" + snippet)) return true
-  }
-  if (snippets.length === 2 && trimmed === snippets[0] + "\n" + snippets[1]) return true
-  return false
-}
-
-// Remove reminders left at the tail of a message by a previous run of this hook
-// (retries and hot reloads can hand back an already overlaid copy). Nothing else
-// is stripped.
-function stripInjectedText(text: string, snippets: string[]): string {
-  let out = String(text || "")
-  for (const marker of LEGACY_MARKERS) {
-    const index = out.indexOf("\n\n" + marker)
-    if (index >= 0) out = out.slice(0, index)
-  }
-  const ordered = snippets.filter(Boolean).slice().sort((a, b) => b.length - a.length)
-  for (let i = 0; i < 4; i++) {
-    const trimmed = out.replace(/\s+$/, "")
-    const hit = ordered.find((snippet) => trimmed.endsWith(snippet))
-    if (!hit) break
-    out = trimmed.slice(0, trimmed.length - hit.length).replace(/\s+$/, "")
-  }
-  return out
-}
-
-function withOverlay(message: any, overlay: string, snippets: string[]): any {
+// Append the first reminder to the request copy while keeping the persisted
+// step text intact. Only a previous first append is removed; the user's own
+// text and the stored step reminder are never dropped.
+function withFirst(message: any, firstText: string): any {
   const copy = { ...message }
   const content = message?.content
 
-  if (Array.isArray(content)) {
-    const parts = content.filter((part: any) => !isInjectedPart(part, snippets))
-    const hasText = parts.some(
-      (part: any) => part && part.type === "text" && String(part.text || "").trim(),
-    )
-    // Some projected messages carry text in `text` instead of a text part.
-    if (!hasText && typeof message?.text === "string" && message.text.trim()) {
-      parts.push({ type: "text", text: stripInjectedText(message.text, snippets) })
+  const stripTail = (text: string): string => {
+    const value = String(text || "")
+    const trimmed = value.replace(/\s+$/, "")
+    if (trimmed === firstText) return ""
+    if (trimmed.endsWith("\n" + firstText)) {
+      return trimmed.slice(0, trimmed.length - firstText.length).replace(/\s+$/, "")
     }
-    parts.push({ type: "text", text: overlay })
+    return value
+  }
+
+  if (Array.isArray(content)) {
+    const parts = content.filter(
+      (part: any) => !(part?.type === "text" && String(part?.text || "").trim() === firstText),
+    )
+    const last = parts[parts.length - 1]
+    if (last?.type === "text" && typeof last.text === "string") {
+      const stripped = stripTail(last.text)
+      if (stripped !== last.text) parts[parts.length - 1] = { ...last, text: stripped }
+    }
+    parts.push({ type: "text", text: firstText })
     copy.content = parts
     return copy
   }
 
   if (typeof content === "string") {
-    copy.content = stripInjectedText(content, snippets) + "\n\n" + overlay
+    const base = stripTail(content)
+    copy.content = base ? `${base}\n\n${firstText}` : firstText
     return copy
   }
 
   if (typeof message?.text === "string") {
-    copy.text = stripInjectedText(message.text, snippets) + "\n\n" + overlay
+    const base = stripTail(message.text)
+    copy.text = base ? `${base}\n\n${firstText}` : firstText
     return copy
   }
 
-  copy.content = [{ type: "text", text: overlay }]
+  copy.content = [{ type: "text", text: firstText }]
   return copy
-}
-
-function findCurrentUserIndex(messages: any[]): number {
-  for (let i = messages.length - 1; i >= 0; i--) {
-    if (roleOf(messages[i]) === "user") return i
-  }
-  return -1
 }
 
 function partText(part: Part, agent: string): string {
@@ -373,32 +342,22 @@ function modelMatches(part: FirstPart, model: string): boolean {
   })
 }
 
-async function resolveModel(ctx: any, sessionID: string, event: any): Promise<string> {
-  const candidates: any[] = []
-  if (event?.model !== undefined) candidates.push(event.model)
-  if (event?.modelID || event?.providerID) candidates.push(event)
-  try {
-    candidates.push(await ctx.session.get({ sessionID }))
-  } catch {
-    // Model is optional; first just will not match a configured list.
+function modelFromEvent(event: any): string {
+  const value = event?.model
+  if (typeof value === "string") {
+    const text = value.trim()
+    if (text) return text
   }
-  for (const item of candidates) {
-    if (!item) continue
-    if (typeof item === "string") {
-      const text = item.trim()
-      if (text) return text
-      continue
-    }
-    const nested = item.model && typeof item.model === "object" ? item.model : null
-    const provider = String(
-      item.providerID || nested?.providerID || item.provider?.id || item.provider || "",
-    ).trim()
-    const model = String(
-      nested?.modelID || nested?.id || item.modelID || (provider && typeof item.id === "string" ? item.id : ""),
-    ).trim()
+  if (value && typeof value === "object") {
+    const provider = String(value.providerID || value.provider?.id || value.provider || "").trim()
+    const model = String(value.modelID || value.id || "").trim()
     if (provider && model) return `${provider}/${model}`
     if (model) return model
   }
+  const provider = String(event?.providerID || "").trim()
+  const model = String(event?.modelID || "").trim()
+  if (provider && model) return `${provider}/${model}`
+  if (model) return model
   return ""
 }
 
@@ -436,18 +395,57 @@ async function onPrompt(ctx: any, event: any): Promise<void> {
     const messageID = String(event?.messageID || event?.message?.id || "")
     if (!sessionID) return
 
-    const session = await resolveSession(ctx, sessionID, "")
+    const session = await resolveSession(ctx, sessionID, String(event?.agent || ""))
     if (!session || !session.main) return
 
     const agent = session.agent
-    const hasFirst = !!partText(cfg.first, agent)
-    const hasStep = !!partText(cfg.step, agent)
-    if (!hasFirst && !hasStep) return
+    const firstText = partText(cfg.first, agent)
+    const stepText = partText(cfg.step, agent)
+    if (!firstText && !stepText) return
 
-    // A new prompt starts a new turn; the first model call of that turn carries
-    // the "first" reminder once.
-    const model = await resolveModel(ctx, sessionID, event)
-    turns.set(sessionID, { messageID, firstPending: true, ts: Date.now(), model })
+    const prompt = event?.prompt
+    const synthetic =
+      event?.synthetic === true ||
+      prompt?.synthetic === true ||
+      event?.message?.synthetic === true ||
+      String(event?.type || "") === "synthetic"
+    if (synthetic) return
+
+    // Step is persisted into the canonical user input by this prompt hook, so
+    // every later model call sees it in history without touching tool results.
+    let persistedStep = false
+    let persistReason = "no-prompt-text"
+    if (stepText) {
+      if (prompt && typeof prompt.text === "string") {
+        const base = prompt.text.replace(/\s+$/, "")
+        if (base.endsWith(stepText)) {
+          persistReason = "already-present"
+        } else {
+          prompt.text = base ? `${base}\n\n${stepText}` : stepText
+          persistedStep = true
+          persistReason = "appended"
+        }
+      }
+    } else {
+      persistReason = "no-step"
+    }
+
+    if (firstText && messageID) {
+      turns.set(sessionID, { messageID, firstPending: true, ts: Date.now() })
+    }
+
+    logEvent({
+      ts: new Date().toISOString(),
+      kind: "prompt",
+      sessionID,
+      agent,
+      messageID,
+      persistedStep,
+      persistReason,
+      injectedFirst: false,
+      injectedStep: persistedStep,
+      error: null,
+    })
   } catch {
     // Never block the prompt.
   }
@@ -466,81 +464,79 @@ async function onContext(ctx: any, event: any): Promise<void> {
     if (!session || !session.main) return
     const agent = session.agent
 
-    const last = messages[messages.length - 1]
-    // Plan mode appends a synthetic <system-reminder> as a user message after the
-    // assistant reply. It is not a new user turn; never overlaid.
-    if (isSynthetic(last)) return
-
-    const userIndex = findCurrentUserIndex(messages)
-    if (userIndex < 0) return
-
-    // A compaction checkpoint is projected as a plain user message with its own
-    // ID. Skip it entirely: injecting here reads as a brand-new question and
-    // breaks the continuity of the turn being compacted.
-    if (isSynthetic(messages[userIndex])) return
-
-    const currentID = String(messages[userIndex]?.id || "")
     const state = turns.get(sessionID)
-
-    // The only user message allowed to receive reminders is the one the prompt
-    // hook registered for this turn. A different ID means a compaction summary
-    // (whatever format the model produced) or a prompt this process never saw:
-    // stay out of it instead of mistaking it for a new question.
-    if (!state || !state.messageID || !currentID || state.messageID !== currentID) return
-
-    const firstPending = state.firstPending && Date.now() - state.ts <= TURN_TTL_MS
-    const firstAllowed = !!partText(cfg.first, agent) && modelMatches(cfg.first, state.model)
-    const isFirst = firstPending && firstAllowed
-
-    // The first call of a turn is spent even when the model does not match:
-    // a mid-turn model switch must not make first appear on a later call.
-    if (firstPending && !firstAllowed) {
-      turns.set(sessionID, { ...state, firstPending: false, ts: Date.now() })
+    if (!state || !state.firstPending) return
+    if (Date.now() - state.ts > TURN_TTL_MS) {
+      turns.set(sessionID, { ...state, firstPending: false })
+      return
     }
 
+    // Anchor by the prompt hook's message ID, never by "the last user message".
+    // Plan reminders, checkpoints and subagent messages can trail the prompt and
+    // must not change where first is applied.
+    const anchorIndex = messages.findIndex(
+      (message: any) => String(message?.id || "") === state.messageID,
+    )
+    if (anchorIndex < 0) return
+
+    const anchor = messages[anchorIndex]
+    if (roleOf(anchor) !== "user" || isSynthetic(anchor)) return
+
     const firstText = partText(cfg.first, agent)
-    const stepText = partText(cfg.step, agent)
-    const segments: string[] = []
-    if (isFirst && firstText) segments.push(firstText)
-    if (stepText) segments.push(stepText)
+    if (!firstText) {
+      turns.set(sessionID, { ...state, firstPending: false })
+      return
+    }
 
-    // The plugin only assembles what the config gives it. Nothing to say means
-    // no touch at all: no clone, no marker, no empty line.
-    if (segments.length === 0) return
+    // First belongs to the turn's first model call. Retries and repeated
+    // assemblies before any assistant step keep it; once this turn has an
+    // assistant message, first is spent. Subagent sessions never reach here.
+    const assistantAfter = messages
+      .slice(anchorIndex + 1)
+      .some((message: any) => roleOf(message) === "assistant")
+    if (assistantAfter) {
+      turns.set(sessionID, { ...state, firstPending: false })
+      return
+    }
 
-    const overlay = segments.join("\n")
-    const snippets = [firstText, stepText].filter(Boolean)
+    let model = modelFromEvent(event)
+    if (cfg.first.models.length && (!model || !modelMatches(cfg.first, model))) {
+      logEvent({
+        ts: new Date().toISOString(),
+        kind: "first",
+        sessionID,
+        agent,
+        messageID: state.messageID,
+        model,
+        injectedFirst: false,
+        injectedStep: false,
+        reason: model ? "model-mismatch" : "no-model",
+        error: null,
+      })
+      return
+    }
+
     let error: string | null = null
-
     try {
       const next = messages.slice()
-      next[userIndex] = withOverlay(messages[userIndex], overlay, snippets)
+      next[anchorIndex] = withFirst(anchor, firstText)
       event.messages = next
-
-      // Consume the first flag only after the request copy was accepted, so a
-      // retry after a failed injection can still carry it.
-      if (isFirst) {
-        turns.set(sessionID, {
-          messageID: currentID || state?.messageID || "",
-          firstPending: false,
-          ts: Date.now(),
-          model: state.model,
-        })
-      }
     } catch (err) {
       error = err instanceof Error ? err.message : String(err)
     }
 
-    if (isFirst) {
-      logEvent({
-        ts: new Date().toISOString(),
-        sessionID,
-        agent,
-        injectedFirst: !!firstText && !error,
-        injectedStep: !!stepText && !error,
-        error,
-      })
-    }
+    logEvent({
+      ts: new Date().toISOString(),
+      kind: "first",
+      sessionID,
+      agent,
+      messageID: state.messageID,
+      model,
+      injectedFirst: !error,
+      injectedStep: false,
+      reason: error ? "write-error" : "injected",
+      error,
+    })
   } catch {
     // Fail open.
   }
