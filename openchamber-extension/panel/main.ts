@@ -13,6 +13,7 @@ import {
   applyHostReady,
   mountBanner,
   mountButton,
+  mountSelect,
   mountSwitch,
   mountTabs,
   mountTextField,
@@ -22,6 +23,7 @@ import {
 } from '@openchamber/sdk/ui';
 
 const CONFIG_PATH = '~/.config/opencode/enhanced-prompt-card.json';
+const MODELS_PATH = '~/.config/opencode/enhanced-prompt-card-models.json';
 const EVENTS_PATH = '~/.config/opencode/enhanced-prompt-card-events.jsonl';
 const AGENTS_DIR = '~/.config/opencode/agents';
 const POLL_MS = 5000;
@@ -51,6 +53,8 @@ type EventRow = {
   error?: string | null;
 };
 
+type ModelEntry = { id: string; name: string; providerName?: string };
+
 const host = connectHost();
 const root = document.querySelector('#root') as HTMLElement;
 
@@ -63,6 +67,7 @@ let dirty = false;
 let events: EventRow[] = [];
 let allAgents: string[] = [];
 let baseAgents: string[] = [];
+let modelCatalog: ModelEntry[] = [];
 const agentRebuilders: Array<() => void> = [];
 
 function removeAgent(name: string): void {
@@ -233,6 +238,25 @@ async function loadEvents(): Promise<void> {
     }
   }
   events = rows.slice(-300).reverse();
+}
+
+async function loadModels(): Promise<void> {
+  modelCatalog = [];
+  const raw = await readText(MODELS_PATH);
+  if (!raw) return;
+  try {
+    const parsed = JSON.parse(raw) as { models?: ModelEntry[] };
+    if (!Array.isArray(parsed.models)) return;
+    modelCatalog = parsed.models
+      .filter((item) => item && typeof item.id === 'string' && item.id)
+      .map((item) => ({
+        id: item.id,
+        name: typeof item.name === 'string' && item.name ? item.name : item.id,
+        providerName: typeof item.providerName === 'string' ? item.providerName : '',
+      }));
+  } catch {
+    modelCatalog = [];
+  }
 }
 
 function parseDate(value: string): Date | null {
@@ -515,18 +539,57 @@ function buildPartCard(
     const modelSlot = el('div');
     modelRow.append(modelSlot);
     body.append(modelRow);
-    mountTextField(modelSlot, {
-      label: '模型（provider/model）',
-      value: firstPart.models.join(', '),
-      placeholder: '例如 opencode-go/deepseek-v4.1-flash，逗号分隔',
-      helper: '留空 = 全部模型；填写后需 agent 和模型同时命中才注入 first',
-      onChange: (value) => {
-        firstPart.models = normalizeNames(splitNames(value));
+
+    const chips = el('div', 'agent-chips');
+    const addSlot = el('div', 'agent-extra');
+    modelSlot.append(chips, addSlot);
+
+    const rebuild = (): void => {
+      chips.textContent = '';
+      for (const id of firstPart.models) {
+        const wrap = el('span', 'agent-chip-wrap');
+        const chip = el('span', 'agent-chip', id);
+        chip.title = id;
+        const remove = el('button', 'agent-chip-x', '×');
+        remove.type = 'button';
+        remove.title = '移除';
+        remove.addEventListener('click', () => {
+          firstPart.models = firstPart.models.filter((item) => item !== id);
+          rebuild();
+          markDirty();
+          updatePreview();
+        });
+        wrap.append(chip, remove);
+        chips.append(wrap);
+      }
+    };
+
+    const options = modelCatalog.map((item) => ({
+      id: item.id,
+      label: item.id,
+      hint: item.providerName || '',
+    }));
+    const select = mountSelect(addSlot, {
+      label: '添加模型',
+      value: null,
+      options,
+      searchable: true,
+      searchPlaceholder: '搜索 provider/model',
+      placeholder: options.length ? '选择要注入 first 的模型' : '模型列表未生成，重启 OpenCode 后可用',
+      disabled: !options.length,
+      onChange: (id) => {
+        if (!id) return;
+        if (!firstPart.models.includes(id)) firstPart.models = [...firstPart.models, id];
+        select.update({ value: null });
+        rebuild();
         markDirty();
         updatePreview();
       },
     });
-    modelRow.append(el('div', 'oc-sdk-field-note', '只作用于 first；step 仍只看 agent。'));
+    rebuild();
+    modelRow.append(
+      el('div', 'oc-sdk-field-note', '留空 = 全部模型；选中后需 agent 与模型同时命中。'),
+    );
   }
 
   const textSlot = el('div');
@@ -879,6 +942,7 @@ async function boot(): Promise<void> {
     await loadConfig();
     await loadAgents();
     await loadEvents();
+    await loadModels();
     buildDom();
     renderOverview();
     renderDiagnostics();

@@ -13,11 +13,14 @@
 //
 // Failure policy: fail open. Any unexpected error means "no injection".
 
-import { appendFileSync, mkdirSync, readFileSync, statSync } from "node:fs"
+import { appendFileSync, mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs"
 import { homedir } from "node:os"
 import { dirname, join } from "node:path"
 
 const CONFIG_PATH = join(homedir(), ".config/opencode/enhanced-prompt-card.json")
+const MODELS_CACHE_PATH = join(homedir(), ".config/opencode/enhanced-prompt-card-models.json")
+const MODELS_SOURCE_PATH = join(homedir(), ".cache/opencode/models.json")
+const OPENCODE_CONFIG_PATH = join(homedir(), ".config/opencode/opencode.json")
 
 const SESSION_TTL_MS = 60_000
 const TURN_TTL_MS = 10 * 60_000
@@ -128,6 +131,42 @@ function loadConfig(): Config {
     configCache = emptyConfig()
     configMtime = -1
     return configCache
+  }
+}
+
+// Write a compact catalog for the panel's model picker. OpenCode keeps the full
+// catalog in a multi-megabyte cache, which is too large for the panel's file
+// read limit; the plugin reads it locally and narrows it to configured providers.
+function syncModelCatalog(): void {
+  try {
+    const catalog = JSON.parse(readFileSync(MODELS_SOURCE_PATH, "utf8"))
+    const config = JSON.parse(readFileSync(OPENCODE_CONFIG_PATH, "utf8"))
+    const providers = Object.keys(config?.providers || {})
+    if (!providers.length) return
+    const models: Array<{ id: string; name: string; provider: string; providerName: string }> = []
+    for (const provider of providers) {
+      const entry = catalog?.[provider]
+      const list = entry?.models
+      if (!list || typeof list !== "object") continue
+      for (const [key, meta] of Object.entries<any>(list)) {
+        models.push({
+          id: `${provider}/${key}`,
+          name: String(meta?.name || key),
+          provider,
+          providerName: String(entry?.name || provider),
+        })
+      }
+    }
+    if (!models.length) return
+    models.sort(
+      (a, b) => a.providerName.localeCompare(b.providerName) || a.id.localeCompare(b.id),
+    )
+    writeFileSync(
+      MODELS_CACHE_PATH,
+      JSON.stringify({ version: 1, generatedAt: new Date().toISOString(), models }) + "\n",
+    )
+  } catch {
+    // The panel simply shows no options when the catalog cannot be built.
   }
 }
 
@@ -444,6 +483,7 @@ async function onContext(ctx: any, event: any): Promise<void> {
 export default {
   id: "enhanced-prompt-card",
   async setup(ctx: any) {
+    syncModelCatalog()
     await ctx.session.hook("prompt", (event: any) => onPrompt(ctx, event))
     await ctx.session.hook("context", (event: any) => onContext(ctx, event))
   },

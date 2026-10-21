@@ -1747,6 +1747,18 @@ ${GUEST_UI_LOOK_CSS}`;
       node.setAttribute(name, value);
     }
   };
+  var onOutsideClick = (node, handler) => {
+    const listener = (event) => {
+      if (event.target instanceof Node && node.contains(event.target)) {
+        return;
+      }
+      handler();
+    };
+    document.addEventListener("pointerdown", listener, true);
+    return () => {
+      document.removeEventListener("pointerdown", listener, true);
+    };
+  };
 
   // ../session-usage/node_modules/@openchamber/sdk/dist/ui/button.js
   var ring = () => {
@@ -1902,6 +1914,243 @@ ${GUEST_UI_LOOK_CSS}`;
     return target?.id ?? null;
   };
 
+  // ../session-usage/node_modules/@openchamber/sdk/dist/ui/option.js
+  var optionId = (uid, id) => `${uid}-${id ?? ""}`;
+  var createOption = (uid, role, spec, on) => {
+    const node = button("oc-sdk-option");
+    node.id = optionId(uid, spec.id);
+    node.setAttribute("role", role);
+    node.tabIndex = -1;
+    node.disabled = Boolean(spec.disabled);
+    if (role === "option") {
+      node.setAttribute("aria-selected", spec.selected ? "true" : "false");
+    }
+    node.dataset.destructive = spec.destructive ? "true" : "false";
+    const label = el("span", "oc-sdk-option-label");
+    label.textContent = spec.label;
+    node.append(label);
+    if (spec.hint) {
+      const hint = el("span", "oc-sdk-option-hint");
+      hint.textContent = spec.hint;
+      node.append(hint);
+    }
+    if (role === "option") {
+      node.dataset.mark = "check";
+      const check = el("span", "oc-sdk-option-check");
+      check.append(icon("check", 14));
+      node.append(check);
+    }
+    node.addEventListener("pointerenter", on.hover);
+    node.addEventListener("click", on.pick);
+    return node;
+  };
+  var highlightOption = (container, focusOwner, uid, id) => {
+    const target = optionId(uid, id);
+    for (const child of Array.from(container.children)) {
+      if (child instanceof HTMLElement && child.classList.contains("oc-sdk-option")) {
+        child.dataset.active = child.id === target ? "true" : "false";
+      }
+    }
+    setAttr(focusOwner, "aria-activedescendant", id ? target : null);
+    container.querySelector('[data-active="true"]')?.scrollIntoView({ block: "nearest" });
+  };
+
+  // ../session-usage/node_modules/@openchamber/sdk/dist/ui/popup.js
+  var placePopup = (popup, trigger) => {
+    const rect = trigger.getBoundingClientRect();
+    popup.style.minWidth = `${Math.round(rect.width)}px`;
+    popup.style.left = `${Math.round(rect.left)}px`;
+    popup.style.top = `${Math.round(rect.bottom + 4)}px`;
+    const height = popup.offsetHeight;
+    const roomBelow = window.innerHeight - rect.bottom - 8;
+    if (height > roomBelow && rect.top - 8 > roomBelow) {
+      popup.style.top = `${Math.max(8, Math.round(rect.top - 4 - height))}px`;
+    }
+    const overflow = rect.left + popup.offsetWidth - window.innerWidth + 8;
+    if (overflow > 0) {
+      popup.style.left = `${Math.max(8, Math.round(rect.left - overflow))}px`;
+    }
+  };
+  var openPopup = (host2, trigger, popup, close) => {
+    host2.append(popup);
+    placePopup(popup, trigger);
+    const stopOutside = onOutsideClick(host2, close);
+    const onResize = () => {
+      close();
+    };
+    const onScroll = (event) => {
+      if (event.target instanceof Node && popup.contains(event.target)) {
+        return;
+      }
+      close();
+    };
+    window.addEventListener("resize", onResize);
+    window.addEventListener("scroll", onScroll, true);
+    return () => {
+      stopOutside();
+      window.removeEventListener("resize", onResize);
+      window.removeEventListener("scroll", onScroll, true);
+      popup.remove();
+    };
+  };
+
+  // ../session-usage/node_modules/@openchamber/sdk/dist/ui/select.js
+  var filterSelectOptions = (options, query) => {
+    const needle = query.trim().toLowerCase();
+    if (!needle) {
+      return [...options];
+    }
+    return options.filter((option) => option.label.toLowerCase().includes(needle) || option.id.toLowerCase().includes(needle));
+  };
+  var selectCount = 0;
+  var mountSelect = (root2, initial) => {
+    ensureStyle(UI_CSS);
+    let props = initial;
+    const uid = `oc-sdk-select-${selectCount += 1}`;
+    const wrap = el("div", "oc-sdk oc-sdk-select");
+    const caption = el("span", "oc-sdk-field-label");
+    caption.id = `${uid}-label`;
+    const trigger = button("oc-sdk-trigger");
+    trigger.setAttribute("aria-haspopup", "listbox");
+    trigger.setAttribute("aria-labelledby", caption.id);
+    const value = el("span", "oc-sdk-trigger-value");
+    trigger.append(value, icon("chevron", 14, "oc-sdk-trigger-chevron"));
+    wrap.append(caption, trigger);
+    root2.append(wrap);
+    let query = "";
+    let activeId = null;
+    let closePopup = null;
+    const popup = el("div", "oc-sdk oc-sdk-popup");
+    const searchSlot = el("div", "oc-sdk-popup-search");
+    const search = el("input", "oc-sdk-input");
+    search.type = "text";
+    search.autocomplete = "off";
+    searchSlot.append(search);
+    const listbox = el("div");
+    listbox.setAttribute("role", "listbox");
+    listbox.tabIndex = -1;
+    popup.append(listbox);
+    const visible = () => filterSelectOptions(props.options, props.searchable ? query : "");
+    const focusOwner = () => props.searchable ? search : listbox;
+    const setActive = (id) => {
+      activeId = id;
+      highlightOption(listbox, focusOwner(), uid, id);
+    };
+    const paintOptions = () => {
+      clearNode(listbox);
+      const options = visible();
+      if (options.length === 0) {
+        const empty2 = el("div", "oc-sdk-popup-empty");
+        empty2.textContent = "No matches";
+        listbox.append(empty2);
+      }
+      for (const option of options) {
+        listbox.append(createOption(uid, "option", { ...option, selected: option.id === props.value }, {
+          hover: () => setActive(option.id),
+          pick: () => pick(option.id)
+        }));
+      }
+      setActive(options.some((option) => option.id === activeId) ? activeId : options[0]?.id ?? null);
+    };
+    const close = () => {
+      const dispose = closePopup;
+      closePopup = null;
+      dispose?.();
+      query = "";
+      search.value = "";
+      trigger.setAttribute("aria-expanded", "false");
+    };
+    const open = () => {
+      if (closePopup || props.disabled) {
+        return;
+      }
+      activeId = props.value;
+      search.placeholder = props.searchPlaceholder ?? "Search";
+      if (props.searchable)
+        popup.prepend(searchSlot);
+      else
+        searchSlot.remove();
+      paintOptions();
+      closePopup = openPopup(wrap, trigger, popup, close);
+      trigger.setAttribute("aria-expanded", "true");
+      focusOwner().focus();
+    };
+    const pick = (id) => {
+      close();
+      trigger.focus();
+      if (id !== props.value)
+        props.onChange(id);
+    };
+    const onTriggerClick = () => {
+      if (closePopup)
+        close();
+      else
+        open();
+    };
+    const onTriggerKey = (event) => {
+      if (!closePopup && navigationKey(event)) {
+        event.preventDefault();
+        open();
+      }
+    };
+    const onPopupKey = (event) => {
+      const step = navigationKey(event);
+      if (step) {
+        event.preventDefault();
+        setActive(moveListSelection(visible(), activeId, step));
+      } else if (event.key === "Enter") {
+        event.preventDefault();
+        if (activeId)
+          pick(activeId);
+      } else if (event.key === "Escape") {
+        event.preventDefault();
+        close();
+        trigger.focus();
+      } else if (props.searchable && event.target !== search && event.key.length === 1 && !event.ctrlKey && !event.metaKey) {
+        search.focus();
+      }
+    };
+    const onSearchInput = () => {
+      query = search.value;
+      paintOptions();
+    };
+    const onFocusOut = (event) => {
+      if (closePopup && !(event.relatedTarget instanceof Node && wrap.contains(event.relatedTarget)))
+        close();
+    };
+    const paint = () => {
+      setText(caption, props.label);
+      caption.hidden = !props.label;
+      const current = props.options.find((option) => option.id === props.value);
+      setText(value, current?.label ?? props.placeholder ?? "Select");
+      value.dataset.empty = current ? "false" : "true";
+      trigger.disabled = Boolean(props.disabled);
+      if (closePopup)
+        paintOptions();
+    };
+    trigger.addEventListener("click", onTriggerClick);
+    trigger.addEventListener("keydown", onTriggerKey);
+    popup.addEventListener("keydown", onPopupKey);
+    search.addEventListener("input", onSearchInput);
+    wrap.addEventListener("focusout", onFocusOut);
+    paint();
+    return {
+      update: (next) => {
+        props = { ...props, ...next };
+        paint();
+      },
+      dispose: () => {
+        close();
+        trigger.removeEventListener("click", onTriggerClick);
+        trigger.removeEventListener("keydown", onTriggerKey);
+        popup.removeEventListener("keydown", onPopupKey);
+        search.removeEventListener("input", onSearchInput);
+        wrap.removeEventListener("focusout", onFocusOut);
+        wrap.remove();
+      }
+    };
+  };
+
   // ../session-usage/node_modules/@openchamber/sdk/dist/ui/checkbox.js
   var mountToggle = (root2, initial, role) => {
     ensureStyle(UI_CSS);
@@ -2053,6 +2302,7 @@ ${GUEST_UI_LOOK_CSS}`;
 
   // panel/main.ts
   var CONFIG_PATH = "~/.config/opencode/enhanced-prompt-card.json";
+  var MODELS_PATH = "~/.config/opencode/enhanced-prompt-card-models.json";
   var EVENTS_PATH = "~/.config/opencode/enhanced-prompt-card-events.jsonl";
   var AGENTS_DIR = "~/.config/opencode/agents";
   var POLL_MS = 5e3;
@@ -2068,6 +2318,7 @@ ${GUEST_UI_LOOK_CSS}`;
   var events = [];
   var allAgents = [];
   var baseAgents = [];
+  var modelCatalog = [];
   var agentRebuilders = [];
   function removeAgent(name) {
     allAgents = allAgents.filter((item) => item !== name);
@@ -2214,6 +2465,22 @@ ${GUEST_UI_LOOK_CSS}`;
       }
     }
     events = rows.slice(-300).reverse();
+  }
+  async function loadModels() {
+    modelCatalog = [];
+    const raw = await readText(MODELS_PATH);
+    if (!raw) return;
+    try {
+      const parsed = JSON.parse(raw);
+      if (!Array.isArray(parsed.models)) return;
+      modelCatalog = parsed.models.filter((item) => item && typeof item.id === "string" && item.id).map((item) => ({
+        id: item.id,
+        name: typeof item.name === "string" && item.name ? item.name : item.id,
+        providerName: typeof item.providerName === "string" ? item.providerName : ""
+      }));
+    } catch {
+      modelCatalog = [];
+    }
   }
   function parseDate(value) {
     const date = new Date(value);
@@ -2457,18 +2724,54 @@ ${GUEST_UI_LOOK_CSS}`;
       const modelSlot = el2("div");
       modelRow.append(modelSlot);
       body.append(modelRow);
-      mountTextField(modelSlot, {
-        label: "\u6A21\u578B\uFF08provider/model\uFF09",
-        value: firstPart.models.join(", "),
-        placeholder: "\u4F8B\u5982 opencode-go/deepseek-v4.1-flash\uFF0C\u9017\u53F7\u5206\u9694",
-        helper: "\u7559\u7A7A = \u5168\u90E8\u6A21\u578B\uFF1B\u586B\u5199\u540E\u9700 agent \u548C\u6A21\u578B\u540C\u65F6\u547D\u4E2D\u624D\u6CE8\u5165 first",
-        onChange: (value) => {
-          firstPart.models = normalizeNames(splitNames(value));
+      const chips = el2("div", "agent-chips");
+      const addSlot = el2("div", "agent-extra");
+      modelSlot.append(chips, addSlot);
+      const rebuild = () => {
+        chips.textContent = "";
+        for (const id of firstPart.models) {
+          const wrap = el2("span", "agent-chip-wrap");
+          const chip = el2("span", "agent-chip", id);
+          chip.title = id;
+          const remove = el2("button", "agent-chip-x", "\xD7");
+          remove.type = "button";
+          remove.title = "\u79FB\u9664";
+          remove.addEventListener("click", () => {
+            firstPart.models = firstPart.models.filter((item) => item !== id);
+            rebuild();
+            markDirty();
+            updatePreview();
+          });
+          wrap.append(chip, remove);
+          chips.append(wrap);
+        }
+      };
+      const options = modelCatalog.map((item) => ({
+        id: item.id,
+        label: item.id,
+        hint: item.providerName || ""
+      }));
+      const select = mountSelect(addSlot, {
+        label: "\u6DFB\u52A0\u6A21\u578B",
+        value: null,
+        options,
+        searchable: true,
+        searchPlaceholder: "\u641C\u7D22 provider/model",
+        placeholder: options.length ? "\u9009\u62E9\u8981\u6CE8\u5165 first \u7684\u6A21\u578B" : "\u6A21\u578B\u5217\u8868\u672A\u751F\u6210\uFF0C\u91CD\u542F OpenCode \u540E\u53EF\u7528",
+        disabled: !options.length,
+        onChange: (id) => {
+          if (!id) return;
+          if (!firstPart.models.includes(id)) firstPart.models = [...firstPart.models, id];
+          select.update({ value: null });
+          rebuild();
           markDirty();
           updatePreview();
         }
       });
-      modelRow.append(el2("div", "oc-sdk-field-note", "\u53EA\u4F5C\u7528\u4E8E first\uFF1Bstep \u4ECD\u53EA\u770B agent\u3002"));
+      rebuild();
+      modelRow.append(
+        el2("div", "oc-sdk-field-note", "\u7559\u7A7A = \u5168\u90E8\u6A21\u578B\uFF1B\u9009\u4E2D\u540E\u9700 agent \u4E0E\u6A21\u578B\u540C\u65F6\u547D\u4E2D\u3002")
+      );
     }
     const textSlot = el2("div");
     body.append(textSlot);
@@ -2775,6 +3078,7 @@ ${GUEST_UI_LOOK_CSS}`;
       await loadConfig();
       await loadAgents();
       await loadEvents();
+      await loadModels();
       buildDom();
       renderOverview();
       renderDiagnostics();
