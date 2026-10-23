@@ -2306,6 +2306,8 @@ ${GUEST_UI_LOOK_CSS}`;
   var EVENTS_PATH = "~/.config/opencode/enhanced-prompt-card-events.jsonl";
   var AGENTS_DIR = "~/.config/opencode/agents";
   var POLL_MS = 5e3;
+  var EVENT_TABLE_LIMIT = 300;
+  var CLIPBOARD_TIMEOUT_MS = 3e3;
   var KNOWN_AGENTS = ["plan", "build"];
   var host = connectHost();
   var root = document.querySelector("#root");
@@ -2335,6 +2337,10 @@ ${GUEST_UI_LOOK_CSS}`;
   var bannerHandle = null;
   var tabsHandle = null;
   var saveHandle = null;
+  var refreshHandle = null;
+  var copyHandle = null;
+  var clearHandle = null;
+  var clearing = false;
   var saveStateEl;
   var statusPillEl;
   var overviewPage;
@@ -2345,6 +2351,10 @@ ${GUEST_UI_LOOK_CSS}`;
   var previewEl;
   var diagSummaryEl;
   var diagTableEl;
+  var clearConfirmEl;
+  var clearConfirmTextEl;
+  var copyFallbackEl;
+  var copyFallbackTextEl;
   var el2 = (tag, className, text) => {
     const node = document.createElement(tag);
     if (className) node.className = className;
@@ -2411,6 +2421,21 @@ ${GUEST_UI_LOOK_CSS}`;
       return null;
     }
   }
+  function withTimeout(promise, ms, message) {
+    return new Promise((resolve, reject) => {
+      const timer = window.setTimeout(() => reject(new Error(message)), ms);
+      promise.then(
+        (value) => {
+          window.clearTimeout(timer);
+          resolve(value);
+        },
+        (err) => {
+          window.clearTimeout(timer);
+          reject(err);
+        }
+      );
+    });
+  }
   async function loadConfig() {
     const raw = await readText(CONFIG_PATH);
     configError = "";
@@ -2464,7 +2489,7 @@ ${GUEST_UI_LOOK_CSS}`;
       } catch {
       }
     }
-    events = rows.slice(-300).reverse();
+    events = rows.reverse();
   }
   async function loadModels() {
     modelCatalog = [];
@@ -2909,14 +2934,15 @@ ${GUEST_UI_LOOK_CSS}`;
     );
   }
   function renderDiagnostics() {
-    diagSummaryEl.textContent = eventError ? eventError : events.length ? `\u8BCA\u65AD\u4E8B\u4EF6 ${events.length} \u6761 \xB7 S \u9690\u85CF\u6CE8\u5165 + \u9996\u8F6E\u8C03\u7528` : "\u8BCA\u65AD\u4E8B\u4EF6 0 \u6761 \xB7 \u63D2\u4EF6\u4EA7\u751F\u7B2C\u4E00\u8F6E\u540E\u4F1A\u51FA\u73B0";
+    const shown = Math.min(events.length, EVENT_TABLE_LIMIT);
+    diagSummaryEl.textContent = eventError ? eventError : events.length ? `\u8BCA\u65AD\u4E8B\u4EF6 ${events.length} \u6761 \xB7 \u8868\u683C\u663E\u793A ${shown} \u6761 \xB7 S \u9690\u85CF\u6CE8\u5165 + \u9996\u8F6E\u8C03\u7528` : "\u8BCA\u65AD\u4E8B\u4EF6 0 \u6761 \xB7 \u63D2\u4EF6\u4EA7\u751F\u7B2C\u4E00\u8F6E\u540E\u4F1A\u51FA\u73B0";
     diagSummaryEl.classList.add("foot");
     diagTableEl.textContent = "";
     if (!events.length) {
       diagTableEl.append(empty(eventError ? eventError : "\u6682\u65E0\u8BCA\u65AD\u4E8B\u4EF6\u3002"));
       return;
     }
-    diagTableEl.append(eventTable(events));
+    diagTableEl.append(eventTable(events.slice(0, EVENT_TABLE_LIMIT)));
   }
   function buildDiagnostics() {
     diagnosticsPage.textContent = "";
@@ -2926,24 +2952,59 @@ ${GUEST_UI_LOOK_CSS}`;
     const actions = el2("div", "diag-actions");
     tools.append(actions);
     diagnosticsPage.append(tools);
-    mountButton(actions, {
+    refreshHandle = mountButton(actions, {
       label: "\u5237\u65B0",
       size: "sm",
       variant: "outline",
-      onClick: () => void refreshEvents()
+      onClick: () => void refreshEvents(true)
     });
-    mountButton(actions, {
+    copyHandle = mountButton(actions, {
       label: "\u590D\u5236 JSONL",
       size: "sm",
       variant: "outline",
       onClick: () => void copyEvents()
     });
-    mountButton(actions, {
+    clearHandle = mountButton(actions, {
       label: "\u6E05\u7A7A",
       size: "sm",
       variant: "ghost",
+      onClick: () => requestClearEvents()
+    });
+    clearConfirmEl = el2("div", "clear-confirm");
+    clearConfirmEl.hidden = true;
+    clearConfirmTextEl = el2("span", "clear-confirm-text");
+    const clearConfirmActions = el2("div", "diag-actions");
+    clearConfirmEl.append(clearConfirmTextEl, clearConfirmActions);
+    mountButton(clearConfirmActions, {
+      label: "\u53D6\u6D88",
+      size: "sm",
+      variant: "outline",
+      onClick: () => {
+        clearConfirmEl.hidden = true;
+      }
+    });
+    mountButton(clearConfirmActions, {
+      label: "\u786E\u8BA4\u6E05\u7A7A",
+      size: "sm",
+      variant: "destructive",
       onClick: () => void clearEvents()
     });
+    diagnosticsPage.append(clearConfirmEl);
+    copyFallbackEl = el2("div", "copy-fallback");
+    copyFallbackEl.hidden = true;
+    const fallbackHead = el2("div", "copy-fallback-head");
+    fallbackHead.append(el2("span", "copy-fallback-title", "\u590D\u5236\u672A\u5B8C\u6210\uFF0C\u53EF\u624B\u52A8\u5168\u9009\u590D\u5236"));
+    const close = el2("button", "copy-fallback-close", "\u5173\u95ED");
+    close.type = "button";
+    close.addEventListener("click", () => {
+      copyFallbackEl.hidden = true;
+    });
+    fallbackHead.append(close);
+    copyFallbackTextEl = el2("textarea", "copy-fallback-text");
+    copyFallbackTextEl.readOnly = true;
+    copyFallbackTextEl.spellcheck = false;
+    copyFallbackEl.append(fallbackHead, copyFallbackTextEl);
+    diagnosticsPage.append(copyFallbackEl);
     diagTableEl = el2("div");
     diagnosticsPage.append(diagTableEl);
   }
@@ -3006,11 +3067,17 @@ ${GUEST_UI_LOOK_CSS}`;
     if (configError) setBanner("warning", "\u914D\u7F6E\u56DE\u9000", configError);
     if (eventError) setBanner("warning", "\u4E8B\u4EF6\u8BFB\u53D6\u5931\u8D25", eventError);
   }
-  async function refreshEvents() {
-    await loadEvents();
-    if (!built) return;
-    renderOverview();
-    renderDiagnostics();
+  async function refreshEvents(manual = false) {
+    if (manual) refreshHandle?.update({ loading: true, label: "\u5237\u65B0\u4E2D\u2026" });
+    try {
+      await loadEvents();
+      if (!built) return;
+      renderOverview();
+      renderDiagnostics();
+      if (manual) setBanner("info", "\u5DF2\u5237\u65B0", `\u8BFB\u53D6 ${events.length} \u6761\u8BCA\u65AD\u4E8B\u4EF6\u3002`);
+    } finally {
+      if (manual) refreshHandle?.update({ loading: false, label: "\u5237\u65B0" });
+    }
   }
   var autoSaveTimer = null;
   function scheduleAutoSave() {
@@ -3056,28 +3123,59 @@ ${GUEST_UI_LOOK_CSS}`;
   }
   async function copyEvents() {
     if (!events.length) {
+      copyFallbackEl.hidden = true;
       setBanner("info", "\u6CA1\u6709\u4E8B\u4EF6", "\u5F53\u524D\u6CA1\u6709\u53EF\u590D\u5236\u7684\u8BCA\u65AD\u4E8B\u4EF6\u3002");
       return;
     }
+    const count = events.length;
     const text = [...events].reverse().map((row) => JSON.stringify(row)).join("\n");
+    copyHandle?.update({ loading: true });
     try {
-      await host.writeClipboard(text);
-      setBanner("info", "\u5DF2\u590D\u5236", `\u5DF2\u590D\u5236 ${events.length} \u6761\u4E8B\u4EF6 JSONL\u3002`);
+      await withTimeout(
+        host.writeClipboard(text),
+        CLIPBOARD_TIMEOUT_MS,
+        `\u5BBF\u4E3B\u526A\u8D34\u677F ${CLIPBOARD_TIMEOUT_MS / 1e3} \u79D2\u672A\u54CD\u5E94`
+      );
+      copyFallbackEl.hidden = true;
+      setBanner("info", "\u5DF2\u590D\u5236", `\u5DF2\u590D\u5236\u5168\u90E8 ${count} \u6761\u4E8B\u4EF6 JSONL\u3002`);
     } catch (err) {
-      setBanner("error", "\u590D\u5236\u5931\u8D25", err instanceof Error ? err.message : String(err));
+      copyFallbackTextEl.value = text;
+      copyFallbackEl.hidden = false;
+      copyFallbackTextEl.focus();
+      copyFallbackTextEl.select();
+      const reason = err instanceof Error ? err.message : String(err);
+      setBanner("warning", "\u590D\u5236\u5931\u8D25\uFF0C\u5DF2\u5C55\u5F00\u6587\u672C", `${reason}\u3002\u53EF\u624B\u52A8\u5168\u9009\u590D\u5236\u3002`);
+    } finally {
+      copyHandle?.update({ loading: false });
     }
   }
+  function requestClearEvents() {
+    if (!events.length) {
+      setBanner("info", "\u6CA1\u6709\u4E8B\u4EF6", "\u5F53\u524D\u6CA1\u6709\u53EF\u6E05\u7A7A\u7684\u8BCA\u65AD\u4E8B\u4EF6\u3002");
+      return;
+    }
+    clearConfirmTextEl.textContent = `\u786E\u8BA4\u6E05\u7A7A\u5168\u90E8 ${events.length} \u6761\u8BCA\u65AD\u4E8B\u4EF6\uFF1F\u6B64\u64CD\u4F5C\u4E0D\u53EF\u64A4\u9500\u3002`;
+    clearConfirmEl.hidden = false;
+    clearConfirmEl.scrollIntoView({ block: "nearest" });
+  }
   async function clearEvents() {
-    if (!events.length) return;
-    if (!window.confirm("\u6E05\u7A7A\u589E\u5F3A\u63D0\u793A\u5361\u8BCA\u65AD\u4E8B\u4EF6\uFF1F\u6B64\u64CD\u4F5C\u4E0D\u53EF\u64A4\u9500\u3002")) return;
+    if (!events.length || clearing) return;
+    const count = events.length;
+    clearing = true;
+    clearHandle?.update({ loading: true });
     try {
       await host.writeFile(EVENTS_PATH, "");
       events = [];
+      clearConfirmEl.hidden = true;
+      copyFallbackEl.hidden = true;
       renderOverview();
       renderDiagnostics();
-      setBanner("info", "\u5DF2\u6E05\u7A7A", "\u8BCA\u65AD\u4E8B\u4EF6\u5DF2\u6E05\u7A7A\u3002");
+      setBanner("info", "\u5DF2\u6E05\u7A7A", `\u5DF2\u6E05\u7A7A\u5168\u90E8 ${count} \u6761\u8BCA\u65AD\u4E8B\u4EF6\u3002`);
     } catch (err) {
       setBanner("error", "\u6E05\u7A7A\u5931\u8D25", err instanceof Error ? err.message : String(err));
+    } finally {
+      clearing = false;
+      clearHandle?.update({ loading: false });
     }
   }
   async function boot() {

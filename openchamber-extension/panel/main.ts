@@ -27,6 +27,8 @@ const MODELS_PATH = '~/.config/opencode/enhanced-prompt-card-models.json';
 const EVENTS_PATH = '~/.config/opencode/enhanced-prompt-card-events.jsonl';
 const AGENTS_DIR = '~/.config/opencode/agents';
 const POLL_MS = 5000;
+const EVENT_TABLE_LIMIT = 300;
+const CLIPBOARD_TIMEOUT_MS = 3000;
 
 const KNOWN_AGENTS = ['plan', 'build'];
 
@@ -93,6 +95,10 @@ let bannerSlot!: HTMLElement;
 let bannerHandle: BannerHandle | null = null;
 let tabsHandle: TabsHandle | null = null;
 let saveHandle: ButtonHandle | null = null;
+let refreshHandle: ButtonHandle | null = null;
+let copyHandle: ButtonHandle | null = null;
+let clearHandle: ButtonHandle | null = null;
+let clearing = false;
 let saveStateEl!: HTMLElement;
 let statusPillEl!: HTMLElement;
 let overviewPage!: HTMLElement;
@@ -103,6 +109,10 @@ let recentEl!: HTMLElement;
 let previewEl!: HTMLElement;
 let diagSummaryEl!: HTMLElement;
 let diagTableEl!: HTMLElement;
+let clearConfirmEl!: HTMLElement;
+let clearConfirmTextEl!: HTMLElement;
+let copyFallbackEl!: HTMLElement;
+let copyFallbackTextEl!: HTMLTextAreaElement;
 
 const el = <K extends keyof HTMLElementTagNameMap>(
   tag: K,
@@ -187,6 +197,22 @@ async function readText(path: string): Promise<string | null> {
   }
 }
 
+function withTimeout<T>(promise: Promise<T>, ms: number, message: string): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const timer = window.setTimeout(() => reject(new Error(message)), ms);
+    promise.then(
+      (value) => {
+        window.clearTimeout(timer);
+        resolve(value);
+      },
+      (err) => {
+        window.clearTimeout(timer);
+        reject(err);
+      },
+    );
+  });
+}
+
 async function loadConfig(): Promise<void> {
   const raw = await readText(CONFIG_PATH);
   configError = '';
@@ -244,7 +270,7 @@ async function loadEvents(): Promise<void> {
       // Skip malformed line.
     }
   }
-  events = rows.slice(-300).reverse();
+  events = rows.reverse();
 }
 
 async function loadModels(): Promise<void> {
@@ -747,10 +773,11 @@ function buildSettings(): void {
 }
 
 function renderDiagnostics(): void {
+  const shown = Math.min(events.length, EVENT_TABLE_LIMIT);
   diagSummaryEl.textContent = eventError
     ? eventError
     : events.length
-      ? `诊断事件 ${events.length} 条 · S 隐藏注入 + 首轮调用`
+      ? `诊断事件 ${events.length} 条 · 表格显示 ${shown} 条 · S 隐藏注入 + 首轮调用`
       : '诊断事件 0 条 · 插件产生第一轮后会出现';
   diagSummaryEl.classList.add('foot');
 
@@ -759,7 +786,7 @@ function renderDiagnostics(): void {
     diagTableEl.append(empty(eventError ? eventError : '暂无诊断事件。'));
     return;
   }
-  diagTableEl.append(eventTable(events));
+  diagTableEl.append(eventTable(events.slice(0, EVENT_TABLE_LIMIT)));
 }
 
 function buildDiagnostics(): void {
@@ -773,24 +800,61 @@ function buildDiagnostics(): void {
   tools.append(actions);
   diagnosticsPage.append(tools);
 
-  mountButton(actions, {
+  refreshHandle = mountButton(actions, {
     label: '刷新',
     size: 'sm',
     variant: 'outline',
-    onClick: () => void refreshEvents(),
+    onClick: () => void refreshEvents(true),
   });
-  mountButton(actions, {
+  copyHandle = mountButton(actions, {
     label: '复制 JSONL',
     size: 'sm',
     variant: 'outline',
     onClick: () => void copyEvents(),
   });
-  mountButton(actions, {
+  clearHandle = mountButton(actions, {
     label: '清空',
     size: 'sm',
     variant: 'ghost',
+    onClick: () => requestClearEvents(),
+  });
+
+  clearConfirmEl = el('div', 'clear-confirm');
+  clearConfirmEl.hidden = true;
+  clearConfirmTextEl = el('span', 'clear-confirm-text');
+  const clearConfirmActions = el('div', 'diag-actions');
+  clearConfirmEl.append(clearConfirmTextEl, clearConfirmActions);
+  mountButton(clearConfirmActions, {
+    label: '取消',
+    size: 'sm',
+    variant: 'outline',
+    onClick: () => {
+      clearConfirmEl.hidden = true;
+    },
+  });
+  mountButton(clearConfirmActions, {
+    label: '确认清空',
+    size: 'sm',
+    variant: 'destructive',
     onClick: () => void clearEvents(),
   });
+  diagnosticsPage.append(clearConfirmEl);
+
+  copyFallbackEl = el('div', 'copy-fallback');
+  copyFallbackEl.hidden = true;
+  const fallbackHead = el('div', 'copy-fallback-head');
+  fallbackHead.append(el('span', 'copy-fallback-title', '复制未完成，可手动全选复制'));
+  const close = el('button', 'copy-fallback-close', '关闭');
+  close.type = 'button';
+  close.addEventListener('click', () => {
+    copyFallbackEl.hidden = true;
+  });
+  fallbackHead.append(close);
+  copyFallbackTextEl = el('textarea', 'copy-fallback-text');
+  copyFallbackTextEl.readOnly = true;
+  copyFallbackTextEl.spellcheck = false;
+  copyFallbackEl.append(fallbackHead, copyFallbackTextEl);
+  diagnosticsPage.append(copyFallbackEl);
 
   diagTableEl = el('div');
   diagnosticsPage.append(diagTableEl);
@@ -865,11 +929,17 @@ function buildDom(): void {
   if (eventError) setBanner('warning', '事件读取失败', eventError);
 }
 
-async function refreshEvents(): Promise<void> {
-  await loadEvents();
-  if (!built) return;
-  renderOverview();
-  renderDiagnostics();
+async function refreshEvents(manual = false): Promise<void> {
+  if (manual) refreshHandle?.update({ loading: true, label: '刷新中…' });
+  try {
+    await loadEvents();
+    if (!built) return;
+    renderOverview();
+    renderDiagnostics();
+    if (manual) setBanner('info', '已刷新', `读取 ${events.length} 条诊断事件。`);
+  } finally {
+    if (manual) refreshHandle?.update({ loading: false, label: '刷新' });
+  }
 }
 
 let autoSaveTimer: number | null = null;
@@ -925,32 +995,64 @@ async function saveConfig(auto = false): Promise<void> {
 
 async function copyEvents(): Promise<void> {
   if (!events.length) {
+    copyFallbackEl.hidden = true;
     setBanner('info', '没有事件', '当前没有可复制的诊断事件。');
     return;
   }
+  const count = events.length;
   const text = [...events]
     .reverse()
     .map((row) => JSON.stringify(row))
     .join('\n');
+  copyHandle?.update({ loading: true });
   try {
-    await host.writeClipboard(text);
-    setBanner('info', '已复制', `已复制 ${events.length} 条事件 JSONL。`);
+    await withTimeout(
+      host.writeClipboard(text),
+      CLIPBOARD_TIMEOUT_MS,
+      `宿主剪贴板 ${CLIPBOARD_TIMEOUT_MS / 1000} 秒未响应`,
+    );
+    copyFallbackEl.hidden = true;
+    setBanner('info', '已复制', `已复制全部 ${count} 条事件 JSONL。`);
   } catch (err) {
-    setBanner('error', '复制失败', err instanceof Error ? err.message : String(err));
+    copyFallbackTextEl.value = text;
+    copyFallbackEl.hidden = false;
+    copyFallbackTextEl.focus();
+    copyFallbackTextEl.select();
+    const reason = err instanceof Error ? err.message : String(err);
+    setBanner('warning', '复制失败，已展开文本', `${reason}。可手动全选复制。`);
+  } finally {
+    copyHandle?.update({ loading: false });
   }
 }
 
+function requestClearEvents(): void {
+  if (!events.length) {
+    setBanner('info', '没有事件', '当前没有可清空的诊断事件。');
+    return;
+  }
+  clearConfirmTextEl.textContent = `确认清空全部 ${events.length} 条诊断事件？此操作不可撤销。`;
+  clearConfirmEl.hidden = false;
+  clearConfirmEl.scrollIntoView({ block: 'nearest' });
+}
+
 async function clearEvents(): Promise<void> {
-  if (!events.length) return;
-  if (!window.confirm('清空增强提示卡诊断事件？此操作不可撤销。')) return;
+  if (!events.length || clearing) return;
+  const count = events.length;
+  clearing = true;
+  clearHandle?.update({ loading: true });
   try {
     await host.writeFile(EVENTS_PATH, '');
     events = [];
+    clearConfirmEl.hidden = true;
+    copyFallbackEl.hidden = true;
     renderOverview();
     renderDiagnostics();
-    setBanner('info', '已清空', '诊断事件已清空。');
+    setBanner('info', '已清空', `已清空全部 ${count} 条诊断事件。`);
   } catch (err) {
     setBanner('error', '清空失败', err instanceof Error ? err.message : String(err));
+  } finally {
+    clearing = false;
+    clearHandle?.update({ loading: false });
   }
 }
 

@@ -303,6 +303,76 @@ td.num { text-align: right; font-variant-numeric: tabular-nums; white-space: now
 
 .diag-actions { display: flex; gap: 6px; flex-wrap: wrap; }
 
+.clear-confirm {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  flex-wrap: wrap;
+  padding: 8px 10px;
+  border: 1px solid color-mix(in srgb, var(--ic-danger) 40%, transparent);
+  border-radius: var(--ic-radius);
+  background: color-mix(in srgb, var(--ic-danger) 8%, transparent);
+}
+
+.clear-confirm[hidden],
+.copy-fallback[hidden] { display: none; }
+
+.clear-confirm-text {
+  color: var(--ic-danger);
+  font-size: 11px;
+  line-height: 1.45;
+}
+
+.copy-fallback {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 8px 10px;
+  border: 1px solid color-mix(in srgb, var(--status-warning, #c58b00) 40%, transparent);
+  border-radius: var(--ic-radius);
+  background: color-mix(in srgb, var(--status-warning, #c58b00) 8%, transparent);
+}
+
+.copy-fallback-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.copy-fallback-title {
+  color: var(--status-warning, #c58b00);
+  font-size: 11px;
+}
+
+.copy-fallback-close {
+  border: 0;
+  background: transparent;
+  color: var(--ic-muted);
+  font: inherit;
+  font-size: 11px;
+  cursor: pointer;
+  padding: 2px 4px;
+}
+
+.copy-fallback-close:hover { color: var(--ic-fg); }
+
+.copy-fallback-text {
+  width: 100%;
+  min-height: 180px;
+  max-height: 45vh;
+  resize: vertical;
+  color: var(--ic-fg);
+  background: var(--ic-subtle);
+  border: 1px solid color-mix(in srgb, var(--ic-border) 75%, transparent);
+  border-radius: 6px;
+  padding: 7px 8px;
+  font-family: var(--font-mono, ui-monospace, SFMono-Regular, Menlo, monospace);
+  font-size: 10px;
+  line-height: 1.5;
+}
+
 .foot {
   color: var(--ic-muted);
   font-size: 10px;
