@@ -2301,9 +2301,10 @@ ${GUEST_UI_LOOK_CSS}`;
   };
 
   // panel/main.ts
-  var CONFIG_PATH = "~/.config/opencode/enhanced-prompt-card.json";
-  var MODELS_PATH = "~/.config/opencode/enhanced-prompt-card-models.json";
-  var EVENTS_PATH = "~/.config/opencode/enhanced-prompt-card-events.jsonl";
+  var DATA_DIR = "~/.local/share/opencode/plugin-data/enhanced-prompt-card";
+  var CONFIG_PATH = `${DATA_DIR}/config.json`;
+  var MODELS_PATH = `${DATA_DIR}/models.json`;
+  var EVENTS_PATH = `${DATA_DIR}/events.jsonl`;
   var AGENTS_DIR = "~/.config/opencode/agents";
   var POLL_MS = 5e3;
   var EVENT_TABLE_LIMIT = 300;
@@ -2367,7 +2368,7 @@ ${GUEST_UI_LOOK_CSS}`;
       enabled: false,
       first: { enabled: false, agents: [], models: [], text: "" },
       step: { enabled: false, agents: [], text: "" },
-      logging: { enabled: false, path: "" }
+      logging: { enabled: false, path: `${DATA_DIR}/events.jsonl` }
     };
   }
   function cloneConfig(value) {
@@ -2409,7 +2410,7 @@ ${GUEST_UI_LOOK_CSS}`;
     const logging = value.logging;
     if (logging && typeof logging === "object") {
       next.logging.enabled = logging.enabled === true;
-      if (typeof logging.path === "string") next.logging.path = logging.path;
+      next.logging.path = typeof logging.path === "string" && logging.path.trim() ? logging.path : `${DATA_DIR}/events.jsonl`;
     }
     return next;
   }
@@ -2930,7 +2931,7 @@ ${GUEST_UI_LOOK_CSS}`;
     saveRow.append(saveStateEl);
     settingsPage.append(saveRow);
     settingsPage.append(
-      settingsNote("\u5199\u5165 ~/.config/opencode/enhanced-prompt-card.json\uFF1B\u6539\u52A8 0.6 \u79D2\u5185\u81EA\u52A8\u4FDD\u5B58\uFF0C\u63D2\u4EF6\u4E0B\u4E00\u8F6E\u6309 mtime \u8BFB\u53D6\u3002")
+      settingsNote("\u5199\u5165 ~/.local/share/opencode/plugin-data/enhanced-prompt-card/config.json\uFF1B\u6539\u52A8 0.6 \u79D2\u5185\u81EA\u52A8\u4FDD\u5B58\uFF0C\u63D2\u4EF6\u4E0B\u4E00\u8F6E\u6309 mtime \u8BFB\u53D6\u3002")
     );
   }
   function renderDiagnostics() {

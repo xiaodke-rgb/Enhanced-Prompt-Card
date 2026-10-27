@@ -11,13 +11,19 @@
 // checkpoints are left alone. An empty part means no content.
 //
 // Failure policy: fail open. Any unexpected error means "no injection".
+//
+// Runtime state (config, model cache, events) lives under
+// ~/.local/share/opencode/plugin-data/enhanced-prompt-card/. Nothing is
+// written under ~/.config/opencode, which OpenCode watches for config reloads.
 
 import { appendFileSync, mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs"
 import { homedir } from "node:os"
 import { dirname, join } from "node:path"
 
-const CONFIG_PATH = join(homedir(), ".config/opencode/enhanced-prompt-card.json")
-const MODELS_CACHE_PATH = join(homedir(), ".config/opencode/enhanced-prompt-card-models.json")
+const DATA_DIR = join(homedir(), ".local", "share", "opencode", "plugin-data", "enhanced-prompt-card")
+const CONFIG_PATH = join(DATA_DIR, "config.json")
+const MODELS_CACHE_PATH = join(DATA_DIR, "models.json")
+const EVENTS_PATH = join(DATA_DIR, "events.jsonl")
 const MODELS_SOURCE_PATH = join(homedir(), ".cache/opencode/models.json")
 const OPENCODE_CONFIG_PATH = join(homedir(), ".config/opencode/opencode.json")
 
@@ -63,7 +69,7 @@ function emptyConfig(): Config {
     enabled: false,
     first: { enabled: false, agents: [], models: [], text: "" },
     step: { enabled: false, agents: [], text: "" },
-    logging: { enabled: false, path: "" },
+    logging: { enabled: false, path: EVENTS_PATH },
   }
 }
 
@@ -109,7 +115,10 @@ function normalizeConfig(raw: any): Config {
   cfg.step = normalizePart(raw.step)
   if (raw.logging && typeof raw.logging === "object") {
     cfg.logging.enabled = raw.logging.enabled === true
-    cfg.logging.path = typeof raw.logging.path === "string" ? raw.logging.path : ""
+    cfg.logging.path =
+      typeof raw.logging.path === "string" && raw.logging.path.trim()
+        ? raw.logging.path
+        : EVENTS_PATH
   }
   return cfg
 }
@@ -225,6 +234,7 @@ function modelsFromRuntime(list: any[], names: Map<string, string>): ModelEntry[
 }
 
 function writeModels(models: ModelEntry[], source: "runtime" | "config"): void {
+  mkdirSync(DATA_DIR, { recursive: true })
   models.sort((a, b) => a.providerName.localeCompare(b.providerName) || a.id.localeCompare(b.id))
   writeFileSync(
     MODELS_CACHE_PATH,
@@ -241,7 +251,7 @@ function logEvent(event: Record<string, unknown>): void {
   const cfg = loadConfig()
   if (!cfg.logging.enabled) return
   try {
-    const path = expandPath(cfg.logging.path)
+    const path = expandPath(cfg.logging.path || EVENTS_PATH)
     if (!path) return
     mkdirSync(dirname(path), { recursive: true })
     appendFileSync(path, JSON.stringify(event) + "\n")
@@ -555,6 +565,11 @@ async function onContext(ctx: any, event: any): Promise<void> {
 export default {
   id: "enhanced-prompt-card",
   async setup(ctx: any) {
+    try {
+      mkdirSync(DATA_DIR, { recursive: true })
+    } catch {
+      // Fail open; reads and writes will report their own errors.
+    }
     await syncModelCatalog(ctx)
     await ctx.session.hook("prompt", (event: any) => onPrompt(ctx, event))
     await ctx.session.hook("context", (event: any) => onContext(ctx, event))

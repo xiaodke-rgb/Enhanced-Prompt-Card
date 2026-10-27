@@ -19,6 +19,6 @@
   },
   "logging": {
     "enabled": true,
-    "path": "~/.config/opencode/enhanced-prompt-card-events.jsonl"
+    "path": "~/.local/share/opencode/plugin-data/enhanced-prompt-card/events.jsonl"
   }
 }

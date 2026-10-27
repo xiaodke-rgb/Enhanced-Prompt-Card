@@ -36,8 +36,11 @@ cp plugin/enhanced-prompt-card.ts ~/.config/opencode/plugins/
 配置文件（必填，插件与面板都不内置任何默认文本）：
 
 ```bash
-cp plugin/enhanced-prompt-card.example.json ~/.config/opencode/enhanced-prompt-card.json
+mkdir -p ~/.local/share/opencode/plugin-data/enhanced-prompt-card
+cp plugin/enhanced-prompt-card.example.json ~/.local/share/opencode/plugin-data/enhanced-prompt-card/config.json
 ```
+
+运行期文件（`models.json`、`events.jsonl`）也放在这个目录，不写入 `~/.config/opencode`。
 
 ```json
 {
@@ -45,7 +48,7 @@ cp plugin/enhanced-prompt-card.example.json ~/.config/opencode/enhanced-prompt-c
   "enabled": true,
   "first": { "enabled": true, "agents": ["plan", "build"], "models": [], "text": "..." },
   "step":  { "enabled": true, "agents": ["plan", "build"], "text": "..." },
-  "logging": { "enabled": true, "path": "~/.config/opencode/enhanced-prompt-card-events.jsonl" }
+  "logging": { "enabled": true, "path": "~/.local/share/opencode/plugin-data/enhanced-prompt-card/events.jsonl" }
 }
 ```
 
@@ -87,4 +90,4 @@ npm run build
 
 MIT
 
-> After updating the plugin code, restart OpenCode once to load it. Editing `enhanced-prompt-card.json` alone needs no restart: the plugin reloads it by mtime.
+> After updating the plugin code, restart OpenCode once to load it. Editing `config.json` alone needs no restart: the plugin reloads it by mtime.

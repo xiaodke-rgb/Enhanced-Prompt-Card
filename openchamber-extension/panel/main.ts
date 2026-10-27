@@ -1,10 +1,9 @@
 /**
  * 增强提示卡面板：概览 / 设置 / 诊断。
  *
- * 面板只读写三个位置：
- * - ~/.config/opencode/enhanced-prompt-card.json（配置）
- * - ~/.config/opencode/enhanced-prompt-card-events.jsonl（插件写的诊断事件）
- * - ~/.config/opencode/agents/*.md（读取可用 agent 名）
+ * 面板读写两个位置：
+ * - ~/.local/share/opencode/plugin-data/enhanced-prompt-card/（配置、模型缓存、诊断事件）
+ * - ~/.config/opencode/agents/*.md（只读可用 agent 名）
  *
  * 没有后台服务；保存由宿主原子写入，插件下一轮按 mtime 读取。
  */
@@ -22,9 +21,10 @@ import {
   type TabsHandle,
 } from '@openchamber/sdk/ui';
 
-const CONFIG_PATH = '~/.config/opencode/enhanced-prompt-card.json';
-const MODELS_PATH = '~/.config/opencode/enhanced-prompt-card-models.json';
-const EVENTS_PATH = '~/.config/opencode/enhanced-prompt-card-events.jsonl';
+const DATA_DIR = '~/.local/share/opencode/plugin-data/enhanced-prompt-card';
+const CONFIG_PATH = `${DATA_DIR}/config.json`;
+const MODELS_PATH = `${DATA_DIR}/models.json`;
+const EVENTS_PATH = `${DATA_DIR}/events.jsonl`;
 const AGENTS_DIR = '~/.config/opencode/agents';
 const POLL_MS = 5000;
 const EVENT_TABLE_LIMIT = 300;
@@ -133,7 +133,7 @@ function emptyConfig(): Config {
     enabled: false,
     first: { enabled: false, agents: [], models: [], text: '' },
     step: { enabled: false, agents: [], text: '' },
-    logging: { enabled: false, path: '' },
+    logging: { enabled: false, path: `${DATA_DIR}/events.jsonl` },
   };
 }
 
@@ -183,7 +183,10 @@ function normalizeConfig(raw: unknown): Config {
   const logging = value.logging as Record<string, unknown> | undefined;
   if (logging && typeof logging === 'object') {
     next.logging.enabled = logging.enabled === true;
-    if (typeof logging.path === 'string') next.logging.path = logging.path;
+    next.logging.path =
+      typeof logging.path === 'string' && logging.path.trim()
+        ? logging.path
+        : `${DATA_DIR}/events.jsonl`;
   }
   return next;
 }
@@ -768,7 +771,7 @@ function buildSettings(): void {
   saveRow.append(saveStateEl);
   settingsPage.append(saveRow);
   settingsPage.append(
-    settingsNote('写入 ~/.config/opencode/enhanced-prompt-card.json；改动 0.6 秒内自动保存，插件下一轮按 mtime 读取。'),
+    settingsNote('写入 ~/.local/share/opencode/plugin-data/enhanced-prompt-card/config.json；改动 0.6 秒内自动保存，插件下一轮按 mtime 读取。'),
   );
 }
 

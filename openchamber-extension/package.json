@@ -1,6 +1,6 @@
 {
   "name": "openchamber-enhanced-prompt-card",
-  "version": "0.1.12",
+  "version": "0.1.13",
   "private": true,
   "description": "增强提示卡 设置与诊断面板（OpenChamber 扩展）",
   "scripts": {
@@ -25,9 +25,8 @@
         "entry": "panel/index.html"
       },
       "filesystem": [
-        "~/.config/opencode/enhanced-prompt-card.json",
-        "~/.config/opencode/enhanced-prompt-card-models.json",
-        "~/.config/opencode/enhanced-prompt-card-events.jsonl",
+        "~/.local/share/opencode/plugin-data/enhanced-prompt-card",
+        "~/.local/share/opencode/plugin-data/enhanced-prompt-card/**",
         "~/.config/opencode/agents",
         "~/.config/opencode/agents/**"
       ],
