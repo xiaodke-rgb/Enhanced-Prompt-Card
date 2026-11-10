@@ -30,6 +30,12 @@ const OPENCODE_CONFIG_PATH = join(homedir(), ".config/opencode/opencode.json")
 const SESSION_TTL_MS = 60_000
 const TURN_TTL_MS = 10 * 60_000
 
+// The panel reads the log in one request and the host caps that at 2 MB
+// (GUEST_FILE_CONTENT_MAX). Keep the file itself a rolling window: once it
+// passes 1 MB, rewrite it with only the newest entries.
+const LOG_MAX_BYTES = 1_000_000
+const LOG_MAX_LINES = 2000
+
 // OpenCode projects a compaction summary into a plain `role: "user"` message
 // whose content starts with this tag. It is not a prompt and carries its own ID,
 // so it must never be overlaid or mistaken for a new turn.
@@ -255,6 +261,10 @@ function logEvent(event: Record<string, unknown>): void {
     if (!path) return
     mkdirSync(dirname(path), { recursive: true })
     appendFileSync(path, JSON.stringify(event) + "\n")
+    if (statSync(path).size > LOG_MAX_BYTES) {
+      const lines = readFileSync(path, "utf8").split("\n").filter(Boolean)
+      writeFileSync(path, lines.slice(-LOG_MAX_LINES).join("\n") + "\n")
+    }
   } catch {
     // Diagnostics must never break a turn.
   }
