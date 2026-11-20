@@ -47,7 +47,20 @@ type Part = {
   text: string
 }
 
-type FirstPart = Part & { models: string[] }
+// One first-turn reminder. Each entry carries its own agents and models, so a
+// turn's first call gets the text written for the model that actually runs it.
+type FirstPrompt = {
+  label: string
+  enabled: boolean
+  agents: string[]
+  models: string[]
+  text: string
+}
+
+type FirstPart = {
+  enabled: boolean
+  prompts: FirstPrompt[]
+}
 
 type Config = {
   enabled: boolean
@@ -73,7 +86,7 @@ let configMtime = -1
 function emptyConfig(): Config {
   return {
     enabled: false,
-    first: { enabled: false, agents: [], models: [], text: "" },
+    first: { enabled: false, prompts: [] },
     step: { enabled: false, agents: [], text: "" },
     logging: { enabled: false, path: EVENTS_PATH },
   }
@@ -103,21 +116,58 @@ function normalizeModels(value: any): string[] {
   return out
 }
 
-function normalizePart(raw: any, withModels = false): Part {
+function normalizePart(raw: any): Part {
   const part: Part = { enabled: false, agents: [], text: "" }
   if (!raw || typeof raw !== "object") return part
   part.enabled = raw.enabled === true
   part.agents = normalizeAgents(raw.agents)
   part.text = typeof raw.text === "string" ? raw.text.trim() : ""
-  if (withModels) (part as FirstPart).models = normalizeModels(raw.models)
   return part
+}
+
+function normalizeFirstPrompt(raw: any): FirstPrompt {
+  const prompt: FirstPrompt = { label: "", enabled: false, agents: [], models: [], text: "" }
+  if (!raw || typeof raw !== "object") return prompt
+  prompt.label =
+    typeof raw.label === "string" ? raw.label.trim().slice(0, 60) : ""
+  prompt.enabled = raw.enabled === true
+  prompt.agents = normalizeAgents(raw.agents)
+  prompt.models = normalizeModels(raw.models)
+  prompt.text = typeof raw.text === "string" ? raw.text.trim() : ""
+  return prompt
+}
+
+// The list is the only shape written from now on. A config still carrying the
+// old single `text` becomes the first entry, so nothing needs retyping.
+function normalizeFirst(raw: any): FirstPart {
+  const first: FirstPart = { enabled: false, prompts: [] }
+  if (!raw || typeof raw !== "object") return first
+  first.enabled = raw.enabled === true
+  if (Array.isArray(raw.prompts)) {
+    for (const item of raw.prompts.slice(0, 20)) {
+      first.prompts.push(normalizeFirstPrompt(item))
+    }
+  }
+  if (
+    !first.prompts.length &&
+    (typeof raw.text === "string" || Array.isArray(raw.models))
+  ) {
+    first.prompts.push({
+      label: "",
+      enabled: raw.enabled === true,
+      agents: normalizeAgents(raw.agents),
+      models: normalizeModels(raw.models),
+      text: typeof raw.text === "string" ? raw.text.trim() : "",
+    })
+  }
+  return first
 }
 
 function normalizeConfig(raw: any): Config {
   const cfg = emptyConfig()
   if (!raw || typeof raw !== "object") return cfg
   cfg.enabled = raw.enabled === true
-  cfg.first = normalizePart(raw.first, true) as FirstPart
+  cfg.first = normalizeFirst(raw.first)
   cfg.step = normalizePart(raw.step)
   if (raw.logging && typeof raw.logging === "object") {
     cfg.logging.enabled = raw.logging.enabled === true
@@ -346,11 +396,31 @@ function partText(part: Part, agent: string): string {
   return part.text.trim()
 }
 
-function modelMatches(part: FirstPart, model: string): boolean {
-  if (!part.models.length) return true
+// Pick the entry written for this model: the first enabled prompt whose agents
+// and models both match. An entry with no models matches every model, so it
+// works as a fallback placed last.
+function firstPromptFor(
+  first: FirstPart,
+  agent: string,
+  model: string,
+): { text: string; index: number; label: string } | null {  if (!first.enabled) return null
+  for (let index = 0; index < first.prompts.length; index += 1) {
+    const prompt = first.prompts[index]
+    if (!prompt.enabled) continue
+    if (!agent || !prompt.agents.includes(agent)) continue
+    if (!modelMatches(prompt, model)) continue
+    const text = prompt.text.trim()
+    if (!text) continue
+    return { text, index, label: prompt.label }
+  }
+  return null
+}
+
+function modelMatches(prompt: FirstPrompt, model: string): boolean {
+  if (!prompt.models.length) return true
   if (!model) return false
   const value = model.toLowerCase()
-  return part.models.some((item) => {
+  return prompt.models.some((item) => {
     const wanted = item.toLowerCase()
     if (!wanted) return false
     if (value === wanted) return true
@@ -420,9 +490,9 @@ async function onPrompt(ctx: any, event: any): Promise<void> {
     if (!session || !session.main) return
 
     const agent = session.agent
-    const firstText = partText(cfg.first, agent)
+    const firstActive = cfg.first.enabled && cfg.first.prompts.length > 0
     const stepText = partText(cfg.step, agent)
-    if (!firstText && !stepText) return
+    if (!firstActive && !stepText) return
 
     const prompt = event?.prompt
     const synthetic =
@@ -457,7 +527,7 @@ async function onPrompt(ctx: any, event: any): Promise<void> {
       }
     }
 
-    if (firstText && messageID) {
+    if (firstActive && messageID) {
       turns.set(sessionID, { messageID, firstPending: true, ts: Date.now() })
     }
 
@@ -512,12 +582,6 @@ async function onContext(ctx: any, event: any): Promise<void> {
     const anchor = messages[anchorIndex]
     if (roleOf(anchor) !== "user" || isSynthetic(anchor)) return
 
-    const firstText = partText(cfg.first, agent)
-    if (!firstText) {
-      turns.set(sessionID, { ...state, firstPending: false })
-      return
-    }
-
     // First belongs to the turn's first model call. Retries and repeated
     // assemblies before any assistant step keep it; once this turn has an
     // assistant message, first is spent. Subagent sessions never reach here.
@@ -529,8 +593,14 @@ async function onContext(ctx: any, event: any): Promise<void> {
       return
     }
 
-    let model = modelFromEvent(event)
-    if (cfg.first.models.length && (!model || !modelMatches(cfg.first, model))) {
+    const model = modelFromEvent(event)
+    if (!cfg.first.enabled) {
+      turns.set(sessionID, { ...state, firstPending: false })
+      return
+    }
+    const picked = firstPromptFor(cfg.first, agent, model)
+    if (!picked) {
+      turns.set(sessionID, { ...state, firstPending: false })
       logEvent({
         ts: new Date().toISOString(),
         kind: "first",
@@ -540,7 +610,7 @@ async function onContext(ctx: any, event: any): Promise<void> {
         model,
         injectedFirst: false,
         injectedStep: false,
-        reason: model ? "model-mismatch" : "no-model",
+        reason: "no-match",
         error: null,
       })
       return
@@ -549,7 +619,7 @@ async function onContext(ctx: any, event: any): Promise<void> {
     let error: string | null = null
     try {
       const next = messages.slice()
-      next[anchorIndex] = withFirst(anchor, firstText)
+      next[anchorIndex] = withFirst(anchor, picked.text)
       event.messages = next
     } catch (err) {
       error = err instanceof Error ? err.message : String(err)
@@ -562,6 +632,8 @@ async function onContext(ctx: any, event: any): Promise<void> {
       agent,
       messageID: state.messageID,
       model,
+      promptIndex: picked.index,
+      promptLabel: picked.label,
       injectedFirst: !error,
       injectedStep: false,
       reason: error ? "write-error" : "injected",

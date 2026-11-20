@@ -36,7 +36,15 @@ type TabId = 'overview' | 'settings' | 'diagnostics';
 
 type Part = { enabled: boolean; agents: string[]; text: string };
 
-type FirstPart = Part & { models: string[] };
+type FirstPrompt = {
+  label: string;
+  enabled: boolean;
+  agents: string[];
+  models: string[];
+  text: string;
+};
+
+type FirstPart = { enabled: boolean; prompts: FirstPrompt[] };
 
 type Config = {
   version: number;
@@ -59,6 +67,8 @@ type EventRow = {
   syntheticStep?: boolean;
   reason?: string;
   model?: string;
+  promptIndex?: number;
+  promptLabel?: string;
   error?: string | null;
 };
 
@@ -82,7 +92,10 @@ const agentRebuilders: Array<() => void> = [];
 function removeAgent(name: string): void {
   allAgents = allAgents.filter((item) => item !== name);
   baseAgents = baseAgents.filter((item) => item !== name);
-  draft.first.agents = draft.first.agents.filter((item) => item !== name);
+  draft.first.prompts = draft.first.prompts.map((prompt) => ({
+    ...prompt,
+    agents: prompt.agents.filter((item) => item !== name),
+  }));
   draft.step.agents = draft.step.agents.filter((item) => item !== name);
   for (const rebuild of agentRebuilders) rebuild();
   markDirty();
@@ -129,9 +142,9 @@ const el = <K extends keyof HTMLElementTagNameMap>(
 // file is shown and saved verbatim. A missing file starts empty, not defaulted.
 function emptyConfig(): Config {
   return {
-    version: 2,
+    version: 3,
     enabled: false,
-    first: { enabled: false, agents: [], models: [], text: '' },
+    first: { enabled: false, prompts: [] },
     step: { enabled: false, agents: [], text: '' },
     logging: { enabled: false, path: `${DATA_DIR}/events.jsonl` },
   };
@@ -160,15 +173,46 @@ function splitNames(value: string): string[] {
     .filter(Boolean);
 }
 
-function normalizePart(raw: unknown, withModels = false): Part {
+function normalizePart(raw: unknown): Part {
   const next: Part = { enabled: false, agents: [], text: '' };
   if (!raw || typeof raw !== 'object') return next;
   const value = raw as Record<string, unknown>;
   next.enabled = value.enabled === true;
   if (Array.isArray(value.agents)) next.agents = normalizeNames(value.agents);
   if (typeof value.text === 'string') next.text = value.text.trim();
-  if (withModels) {
-    (next as FirstPart).models = Array.isArray(value.models) ? normalizeNames(value.models) : [];
+  return next;
+}
+
+function normalizeFirstPrompt(raw: unknown): FirstPrompt {
+  const next: FirstPrompt = { label: '', enabled: false, agents: [], models: [], text: '' };
+  if (!raw || typeof raw !== 'object') return next;
+  const value = raw as Record<string, unknown>;
+  if (typeof value.label === 'string') next.label = value.label.trim().slice(0, 60);
+  next.enabled = value.enabled === true;
+  if (Array.isArray(value.agents)) next.agents = normalizeNames(value.agents);
+  if (Array.isArray(value.models)) next.models = normalizeNames(value.models);
+  if (typeof value.text === 'string') next.text = value.text.trim();
+  return next;
+}
+
+// The list is the only shape written from now on. A config still carrying the
+// old single `text` becomes the first entry, so nothing needs retyping.
+function normalizeFirst(raw: unknown): FirstPart {
+  const next: FirstPart = { enabled: false, prompts: [] };
+  if (!raw || typeof raw !== 'object') return next;
+  const value = raw as Record<string, unknown>;
+  next.enabled = value.enabled === true;
+  if (Array.isArray(value.prompts)) {
+    for (const item of value.prompts.slice(0, 20)) next.prompts.push(normalizeFirstPrompt(item));
+  }
+  if (!next.prompts.length && (typeof value.text === 'string' || Array.isArray(value.models))) {
+    next.prompts.push({
+      label: '',
+      enabled: value.enabled === true,
+      agents: Array.isArray(value.agents) ? normalizeNames(value.agents) : [],
+      models: Array.isArray(value.models) ? normalizeNames(value.models) : [],
+      text: typeof value.text === 'string' ? value.text.trim() : '',
+    });
   }
   return next;
 }
@@ -178,7 +222,7 @@ function normalizeConfig(raw: unknown): Config {
   if (!raw || typeof raw !== 'object') return next;
   const value = raw as Record<string, unknown>;
   next.enabled = value.enabled === true;
-  next.first = normalizePart(value.first, true) as FirstPart;
+  next.first = normalizeFirst(value.first);
   next.step = normalizePart(value.step);
   const logging = value.logging as Record<string, unknown> | undefined;
   if (logging && typeof logging === 'object') {
@@ -236,9 +280,9 @@ async function loadConfig(): Promise<void> {
 async function loadAgents(): Promise<void> {
   const set = new Set<string>([
     ...KNOWN_AGENTS,
-    ...config.first.agents,
+    ...config.first.prompts.flatMap((prompt) => prompt.agents),
     ...config.step.agents,
-    ...draft.first.agents,
+    ...draft.first.prompts.flatMap((prompt) => prompt.agents),
     ...draft.step.agents,
   ]);
   try {
@@ -441,29 +485,39 @@ function renderOverview(): void {
   recentEl.append(eventTable(recent));
 }
 
-function previewValues(): { first: string; step: string } {
+function liveTextarea(selector: string): string | null {
+  if (!settingsPage) return null;
+  const node = settingsPage.querySelector(selector) as HTMLTextAreaElement | null;
+  return node ? node.value : null;
+}
+
+function previewValues(): { first: string[]; step: string } {
   // Read the live textarea values, not only the draft: the preview must mirror
   // what is on screen even when a host re-render or IME path skips onChange.
-  const areas = settingsPage ? Array.from(settingsPage.querySelectorAll('textarea')) : []
-  const read = (index: number, key: 'first' | 'step'): string =>
-    areas[index] ? areas[index].value : draft[key].text
-  return { first: read(0, 'first').trim(), step: read(1, 'step').trim() }
+  const first = draft.first.prompts.map((prompt, index) => {
+    const live = liveTextarea(`textarea[data-prompt-index="${index}"]`);
+    return (live === null ? prompt.text : live).trim();
+  });
+  const stepLive = liveTextarea('textarea[data-step-text]');
+  return { first, step: (stepLive === null ? draft.step.text : stepLive).trim() };
 }
 
 function previewText(): string {
   if (!draft.enabled) return '插件已关闭：不拦截、不注入。';
   const values = previewValues();
-  const first = draft.first.enabled ? values.first : '';
   const step = draft.step.enabled ? values.step : '';
-  if (!first && !step) return '两段都为空：不注入任何内容，消息原样发送。';
-  const models = draft.first.models.length ? `（仅限模型：${draft.first.models.join(', ')}）` : '';
-  return [
-    '用户消息前（S 隐藏注入）',
-    step || '（不注入）',
-    '',
-    `首轮调用（临时 F）${models}`,
-    first || '（不注入）',
-  ].join('\n');
+  const prompts = draft.first.enabled ? draft.first.prompts : [];
+  const blocks: string[] = [];
+  if (step) blocks.push('用户消息前（S 隐藏注入）', step);
+  prompts.forEach((prompt, index) => {
+    const text = values.first[index] || '';
+    if (!prompt.enabled || !text) return;
+    const models = prompt.models.length ? `模型：${prompt.models.join(', ')}` : '模型：全部';
+    const name = prompt.label ? ` ${prompt.label}` : '';
+    blocks.push('', `首轮调用 F${index + 1}${name}（${models}）`, text);
+  });
+  if (!blocks.length) return '两段都为空：不注入任何内容，消息原样发送。';
+  return blocks.join('\n');
 }
 
 function updatePreview(): void {
@@ -540,14 +594,229 @@ function buildAgentEditor(slot: HTMLElement, part: Part): void {
   });
 }
 
-function buildPartCard(
-  key: 'first' | 'step',
+function buildModelEditor(slot: HTMLElement, prompt: FirstPrompt): void {
+  const chips = el('div', 'agent-chips');
+  const addSlot = el('div', 'agent-extra');
+  slot.append(chips, addSlot);
+
+  const rebuild = (): void => {
+    chips.textContent = '';
+    for (const id of prompt.models) {
+      const wrap = el('span', 'agent-chip-wrap');
+      const chip = el('span', 'agent-chip', id);
+      chip.title = id;
+      const remove = el('button', 'agent-chip-x', '×');
+      remove.type = 'button';
+      remove.title = '移除';
+      remove.addEventListener('click', () => {
+        prompt.models = prompt.models.filter((item) => item !== id);
+        rebuild();
+        markDirty();
+        updatePreview();
+      });
+      wrap.append(chip, remove);
+      chips.append(wrap);
+    }
+  };
+
+  const options = modelCatalog.map((item) => ({
+    id: item.id,
+    label: item.id,
+    hint: item.providerName || '',
+  }));
+  const select = mountSelect(addSlot, {
+    label: '添加模型',
+    value: null,
+    options,
+    searchable: true,
+    searchPlaceholder: '搜索 provider/model',
+    placeholder: options.length ? '选择这条提示词注入的模型' : '模型列表未生成，重启 OpenCode 后可用',
+    disabled: !options.length,
+    onChange: (id) => {
+      if (!id) return;
+      if (!prompt.models.includes(id)) prompt.models = [...prompt.models, id];
+      select.update({ value: null });
+      rebuild();
+      markDirty();
+      updatePreview();
+    },
+  });
+  rebuild();
+}
+
+// One reminder per model family. Each card carries its own agents, models and
+// text; the plugin injects the first card that matches the turn's model.
+function buildFirstCard(): HTMLElement {
+  const card = el('div', 'settings-card');
+  card.append(sectionHead('每轮首次注入', '按模型分配', 'green'));
+  const body = el('div', 'settings-card-body');
+
+  const head = el('div', 'mode-head');
+  head.append(el('span', 'row-label', '启用'));
+  const switchSlot = el('div');
+  head.append(switchSlot);
+  body.append(head);
+
+  let partSwitch: ReturnType<typeof mountSwitch> | null = null;
+  partSwitch = mountSwitch(switchSlot, {
+    label: '',
+    checked: draft.first.enabled,
+    onChange: (checked) => {
+      draft.first.enabled = checked;
+      partSwitch?.update({ checked });
+      markDirty();
+      updatePreview();
+    },
+  });
+
+  const list = el('div', 'prompt-list');
+  body.append(list);
+
+  const renderList = (): void => {
+    list.textContent = '';
+    if (!draft.first.prompts.length) {
+      list.append(empty('还没有提示词。点下面「添加提示词」，一条对应一组模型。'));
+      return;
+    }
+    draft.first.prompts.forEach((prompt, index) => {
+      list.append(buildPromptCard(prompt, index, renderList));
+    });
+  };
+
+  const addRow = el('div', 'diag-actions');
+  body.append(addRow);
+  mountButton(addRow, {
+    label: '添加提示词',
+    size: 'sm',
+    variant: 'outline',
+    onClick: () => {
+      draft.first.prompts.push({
+        label: `F${draft.first.prompts.length + 1}`,
+        enabled: true,
+        agents: [...KNOWN_AGENTS],
+        models: [],
+        text: '',
+      });
+      renderList();
+      markDirty();
+      updatePreview();
+    },
+  });
+
+  renderList();
+  card.append(body, settingsNote('按顺序取第一条「启用 + agent 命中 + 模型命中」的文本注入；模型留空 = 该条对所有模型生效。'));
+  return card;
+}
+
+function buildPromptCard(prompt: FirstPrompt, index: number, rerender: () => void): HTMLElement {
+  const wrap = el('div', 'prompt-card');
+  const head = el('div', 'prompt-head');
+  head.append(el('span', 'prompt-title', prompt.label || `F${index + 1}`));
+
+  const headActions = el('div', 'prompt-head-actions');
+  head.append(headActions);
+
+  let promptSwitch: ReturnType<typeof mountSwitch> | null = null;
+  const switchSlot = el('div');
+  headActions.append(switchSlot);
+  promptSwitch = mountSwitch(switchSlot, {
+    label: '',
+    checked: prompt.enabled,
+    onChange: (checked) => {
+      prompt.enabled = checked;
+      promptSwitch?.update({ checked });
+      markDirty();
+      updatePreview();
+    },
+  });
+
+  mountButton(headActions, {
+    label: '删除',
+    size: 'xs',
+    variant: 'ghost',
+    onClick: () => {
+      draft.first.prompts.splice(index, 1);
+      rerender();
+      markDirty();
+      updatePreview();
+    },
+  });
+  wrap.append(head);
+
+  const body = el('div', 'prompt-body');
+
+  const nameSlot = el('div');
+  body.append(nameSlot);
+  mountTextField(nameSlot, {
+    label: '名称',
+    value: prompt.label,
+    placeholder: '例如 F1 / DeepSeek',
+    onChange: (value) => {
+      prompt.label = value.trim().slice(0, 60);
+      const title = head.querySelector('.prompt-title');
+      if (title) title.textContent = prompt.label || `F${index + 1}`;
+      markDirty();
+      updatePreview();
+    },
+  });
+
+  const agentRow = el('div', 'part-grid');
+  agentRow.append(el('span', 'row-label', '作用 agent'));
+  const agentSlot = el('div');
+  agentRow.append(agentSlot);
+  body.append(agentRow);
+  buildAgentEditor(agentSlot, prompt);
+  agentRow.append(el('div', 'oc-sdk-field-note', '未勾选 = 对该 agent 不注入。'));
+
+  const modelRow = el('div', 'part-grid');
+  modelRow.append(el('span', 'row-label', '作用模型'));
+  const modelSlot = el('div');
+  modelRow.append(modelSlot);
+  body.append(modelRow);
+  buildModelEditor(modelSlot, prompt);
+  modelRow.append(el('div', 'oc-sdk-field-note', '留空 = 所有模型；多条命中时取列表中靠前的一条。'));
+
+  const textSlot = el('div');
+  body.append(textSlot);
+  const field = mountTextField(textSlot, {
+    label: '注入文本',
+    value: prompt.text,
+    multiline: true,
+    rows: 4,
+    placeholder: '输入这条提示词要注入的文本',
+    onChange: (value) => {
+      prompt.text = value;
+      markDirty();
+      updatePreview();
+    },
+  });
+  const area = textSlot.querySelector('textarea');
+  if (area) area.dataset.promptIndex = String(index);
+
+  const actions = el('div', 'diag-actions');
+  body.append(actions);
+  mountButton(actions, {
+    label: '清空文本',
+    size: 'sm',
+    variant: 'ghost',
+    onClick: () => {
+      prompt.text = '';
+      field.update({ value: '' });
+      markDirty();
+      updatePreview();
+    },
+  });
+
+  wrap.append(body);
+  return wrap;
+}
+
+function buildStepCard(
   title: string,
   badge: string,
   description: string,
-  showModels = false,
 ): HTMLElement {
-  const part = draft[key];
+  const part = draft.step;
   const card = el('div', 'settings-card');
   card.append(sectionHead(title, badge, 'green'));
   const body = el('div', 'settings-card-body');
@@ -580,66 +849,6 @@ function buildPartCard(
     el('div', 'oc-sdk-field-note', '未勾选 = 对该 agent 不注入；全部不勾 = 这段关闭。'),
   );
 
-  if (showModels) {
-    const firstPart = part as FirstPart;
-    const modelRow = el('div', 'part-grid');
-    modelRow.append(el('span', 'row-label', '作用模型'));
-    const modelSlot = el('div');
-    modelRow.append(modelSlot);
-    body.append(modelRow);
-
-    const chips = el('div', 'agent-chips');
-    const addSlot = el('div', 'agent-extra');
-    modelSlot.append(chips, addSlot);
-
-    const rebuild = (): void => {
-      chips.textContent = '';
-      for (const id of firstPart.models) {
-        const wrap = el('span', 'agent-chip-wrap');
-        const chip = el('span', 'agent-chip', id);
-        chip.title = id;
-        const remove = el('button', 'agent-chip-x', '×');
-        remove.type = 'button';
-        remove.title = '移除';
-        remove.addEventListener('click', () => {
-          firstPart.models = firstPart.models.filter((item) => item !== id);
-          rebuild();
-          markDirty();
-          updatePreview();
-        });
-        wrap.append(chip, remove);
-        chips.append(wrap);
-      }
-    };
-
-    const options = modelCatalog.map((item) => ({
-      id: item.id,
-      label: item.id,
-      hint: item.providerName || '',
-    }));
-    const select = mountSelect(addSlot, {
-      label: '添加模型',
-      value: null,
-      options,
-      searchable: true,
-      searchPlaceholder: '搜索 provider/model',
-      placeholder: options.length ? '选择要注入 first 的模型' : '模型列表未生成，重启 OpenCode 后可用',
-      disabled: !options.length,
-      onChange: (id) => {
-        if (!id) return;
-        if (!firstPart.models.includes(id)) firstPart.models = [...firstPart.models, id];
-        select.update({ value: null });
-        rebuild();
-        markDirty();
-        updatePreview();
-      },
-    });
-    rebuild();
-    modelRow.append(
-      el('div', 'oc-sdk-field-note', '留空 = 全部模型；选中后需 agent 与模型同时命中。'),
-    );
-  }
-
   const textSlot = el('div');
   body.append(textSlot);
   const field = mountTextField(textSlot, {
@@ -654,6 +863,8 @@ function buildPartCard(
       updatePreview();
     },
   });
+  const area = textSlot.querySelector('textarea');
+  if (area) area.dataset.stepText = '1';
 
   const actions = el('div', 'diag-actions');
   body.append(actions);
@@ -699,19 +910,10 @@ function buildSettings(): void {
     },
   });
 
-  settingsPage.append(
-    buildPartCard(
-      'first',
-      '每轮首次注入',
-      '每轮第一次',
-      '只在本轮第一次模型调用时临时追加，需同时满足所选 agent 与模型；文本为空就不加这一段。',
-      true,
-    ),
-  );
+  settingsPage.append(buildFirstCard());
 
   settingsPage.append(
-    buildPartCard(
-      'step',
+    buildStepCard(
       '纪律提醒（S）',
       '落盘',
       '用户提问时追加到消息尾部并落盘；之后每步从历史读取，不再重复注入。文本为空就不加。',
@@ -964,7 +1166,9 @@ async function saveConfig(auto = false): Promise<void> {
     const next = normalizeConfig(draft);
     // Save what is on screen, not a possibly stale draft copy.
     const live = previewValues();
-    next.first.text = live.first;
+    next.first.prompts.forEach((prompt, index) => {
+      if (live.first[index] !== undefined) prompt.text = live.first[index];
+    });
     next.step.text = live.step;
     const payload = JSON.stringify(next, null, 2) + '\n';
     await host.writeFile(CONFIG_PATH, payload);
@@ -980,7 +1184,10 @@ async function saveConfig(auto = false): Promise<void> {
     config = cloneConfig(next);
     // Keep the draft object identity: the built controls hold references to its
     // parts, and replacing it would leave them editing a detached copy.
-    draft.first.text = next.first.text;
+    next.first.prompts.forEach((prompt, index) => {
+      const held = draft.first.prompts[index];
+      if (held) held.text = prompt.text;
+    });
     draft.step.text = next.step.text;
     dirty = false;
     configError = '';

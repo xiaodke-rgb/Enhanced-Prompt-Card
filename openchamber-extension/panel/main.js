@@ -2326,7 +2326,10 @@ ${GUEST_UI_LOOK_CSS}`;
   function removeAgent(name) {
     allAgents = allAgents.filter((item) => item !== name);
     baseAgents = baseAgents.filter((item) => item !== name);
-    draft.first.agents = draft.first.agents.filter((item) => item !== name);
+    draft.first.prompts = draft.first.prompts.map((prompt) => ({
+      ...prompt,
+      agents: prompt.agents.filter((item) => item !== name)
+    }));
     draft.step.agents = draft.step.agents.filter((item) => item !== name);
     for (const rebuild of agentRebuilders) rebuild();
     markDirty();
@@ -2364,9 +2367,9 @@ ${GUEST_UI_LOOK_CSS}`;
   };
   function emptyConfig() {
     return {
-      version: 2,
+      version: 3,
       enabled: false,
-      first: { enabled: false, agents: [], models: [], text: "" },
+      first: { enabled: false, prompts: [] },
       step: { enabled: false, agents: [], text: "" },
       logging: { enabled: false, path: `${DATA_DIR}/events.jsonl` }
     };
@@ -2388,15 +2391,42 @@ ${GUEST_UI_LOOK_CSS}`;
   function splitNames(value) {
     return String(value || "").split(/[,，、\s]+/).map((name) => name.trim()).filter(Boolean);
   }
-  function normalizePart(raw, withModels = false) {
+  function normalizePart(raw) {
     const next = { enabled: false, agents: [], text: "" };
     if (!raw || typeof raw !== "object") return next;
     const value = raw;
     next.enabled = value.enabled === true;
     if (Array.isArray(value.agents)) next.agents = normalizeNames(value.agents);
     if (typeof value.text === "string") next.text = value.text.trim();
-    if (withModels) {
-      next.models = Array.isArray(value.models) ? normalizeNames(value.models) : [];
+    return next;
+  }
+  function normalizeFirstPrompt(raw) {
+    const next = { label: "", enabled: false, agents: [], models: [], text: "" };
+    if (!raw || typeof raw !== "object") return next;
+    const value = raw;
+    if (typeof value.label === "string") next.label = value.label.trim().slice(0, 60);
+    next.enabled = value.enabled === true;
+    if (Array.isArray(value.agents)) next.agents = normalizeNames(value.agents);
+    if (Array.isArray(value.models)) next.models = normalizeNames(value.models);
+    if (typeof value.text === "string") next.text = value.text.trim();
+    return next;
+  }
+  function normalizeFirst(raw) {
+    const next = { enabled: false, prompts: [] };
+    if (!raw || typeof raw !== "object") return next;
+    const value = raw;
+    next.enabled = value.enabled === true;
+    if (Array.isArray(value.prompts)) {
+      for (const item of value.prompts.slice(0, 20)) next.prompts.push(normalizeFirstPrompt(item));
+    }
+    if (!next.prompts.length && (typeof value.text === "string" || Array.isArray(value.models))) {
+      next.prompts.push({
+        label: "",
+        enabled: value.enabled === true,
+        agents: Array.isArray(value.agents) ? normalizeNames(value.agents) : [],
+        models: Array.isArray(value.models) ? normalizeNames(value.models) : [],
+        text: typeof value.text === "string" ? value.text.trim() : ""
+      });
     }
     return next;
   }
@@ -2405,7 +2435,7 @@ ${GUEST_UI_LOOK_CSS}`;
     if (!raw || typeof raw !== "object") return next;
     const value = raw;
     next.enabled = value.enabled === true;
-    next.first = normalizePart(value.first, true);
+    next.first = normalizeFirst(value.first);
     next.step = normalizePart(value.step);
     const logging = value.logging;
     if (logging && typeof logging === "object") {
@@ -2456,9 +2486,9 @@ ${GUEST_UI_LOOK_CSS}`;
   async function loadAgents() {
     const set = /* @__PURE__ */ new Set([
       ...KNOWN_AGENTS,
-      ...config.first.agents,
+      ...config.first.prompts.flatMap((prompt) => prompt.agents),
       ...config.step.agents,
-      ...draft.first.agents,
+      ...draft.first.prompts.flatMap((prompt) => prompt.agents),
       ...draft.step.agents
     ]);
     try {
@@ -2633,25 +2663,35 @@ ${GUEST_UI_LOOK_CSS}`;
     }
     recentEl.append(eventTable(recent));
   }
+  function liveTextarea(selector) {
+    if (!settingsPage) return null;
+    const node = settingsPage.querySelector(selector);
+    return node ? node.value : null;
+  }
   function previewValues() {
-    const areas = settingsPage ? Array.from(settingsPage.querySelectorAll("textarea")) : [];
-    const read = (index, key) => areas[index] ? areas[index].value : draft[key].text;
-    return { first: read(0, "first").trim(), step: read(1, "step").trim() };
+    const first = draft.first.prompts.map((prompt, index) => {
+      const live = liveTextarea(`textarea[data-prompt-index="${index}"]`);
+      return (live === null ? prompt.text : live).trim();
+    });
+    const stepLive = liveTextarea("textarea[data-step-text]");
+    return { first, step: (stepLive === null ? draft.step.text : stepLive).trim() };
   }
   function previewText() {
     if (!draft.enabled) return "\u63D2\u4EF6\u5DF2\u5173\u95ED\uFF1A\u4E0D\u62E6\u622A\u3001\u4E0D\u6CE8\u5165\u3002";
     const values = previewValues();
-    const first = draft.first.enabled ? values.first : "";
     const step = draft.step.enabled ? values.step : "";
-    if (!first && !step) return "\u4E24\u6BB5\u90FD\u4E3A\u7A7A\uFF1A\u4E0D\u6CE8\u5165\u4EFB\u4F55\u5185\u5BB9\uFF0C\u6D88\u606F\u539F\u6837\u53D1\u9001\u3002";
-    const models = draft.first.models.length ? `\uFF08\u4EC5\u9650\u6A21\u578B\uFF1A${draft.first.models.join(", ")}\uFF09` : "";
-    return [
-      "\u7528\u6237\u6D88\u606F\u524D\uFF08S \u9690\u85CF\u6CE8\u5165\uFF09",
-      step || "\uFF08\u4E0D\u6CE8\u5165\uFF09",
-      "",
-      `\u9996\u8F6E\u8C03\u7528\uFF08\u4E34\u65F6 F\uFF09${models}`,
-      first || "\uFF08\u4E0D\u6CE8\u5165\uFF09"
-    ].join("\n");
+    const prompts = draft.first.enabled ? draft.first.prompts : [];
+    const blocks = [];
+    if (step) blocks.push("\u7528\u6237\u6D88\u606F\u524D\uFF08S \u9690\u85CF\u6CE8\u5165\uFF09", step);
+    prompts.forEach((prompt, index) => {
+      const text = values.first[index] || "";
+      if (!prompt.enabled || !text) return;
+      const models = prompt.models.length ? `\u6A21\u578B\uFF1A${prompt.models.join(", ")}` : "\u6A21\u578B\uFF1A\u5168\u90E8";
+      const name = prompt.label ? ` ${prompt.label}` : "";
+      blocks.push("", `\u9996\u8F6E\u8C03\u7528 F${index + 1}${name}\uFF08${models}\uFF09`, text);
+    });
+    if (!blocks.length) return "\u4E24\u6BB5\u90FD\u4E3A\u7A7A\uFF1A\u4E0D\u6CE8\u5165\u4EFB\u4F55\u5185\u5BB9\uFF0C\u6D88\u606F\u539F\u6837\u53D1\u9001\u3002";
+    return blocks.join("\n");
   }
   function updatePreview() {
     if (previewEl) previewEl.textContent = previewText();
@@ -2722,8 +2762,202 @@ ${GUEST_UI_LOOK_CSS}`;
       }
     });
   }
-  function buildPartCard(key, title, badge, description, showModels = false) {
-    const part = draft[key];
+  function buildModelEditor(slot, prompt) {
+    const chips = el2("div", "agent-chips");
+    const addSlot = el2("div", "agent-extra");
+    slot.append(chips, addSlot);
+    const rebuild = () => {
+      chips.textContent = "";
+      for (const id of prompt.models) {
+        const wrap = el2("span", "agent-chip-wrap");
+        const chip = el2("span", "agent-chip", id);
+        chip.title = id;
+        const remove = el2("button", "agent-chip-x", "\xD7");
+        remove.type = "button";
+        remove.title = "\u79FB\u9664";
+        remove.addEventListener("click", () => {
+          prompt.models = prompt.models.filter((item) => item !== id);
+          rebuild();
+          markDirty();
+          updatePreview();
+        });
+        wrap.append(chip, remove);
+        chips.append(wrap);
+      }
+    };
+    const options = modelCatalog.map((item) => ({
+      id: item.id,
+      label: item.id,
+      hint: item.providerName || ""
+    }));
+    const select = mountSelect(addSlot, {
+      label: "\u6DFB\u52A0\u6A21\u578B",
+      value: null,
+      options,
+      searchable: true,
+      searchPlaceholder: "\u641C\u7D22 provider/model",
+      placeholder: options.length ? "\u9009\u62E9\u8FD9\u6761\u63D0\u793A\u8BCD\u6CE8\u5165\u7684\u6A21\u578B" : "\u6A21\u578B\u5217\u8868\u672A\u751F\u6210\uFF0C\u91CD\u542F OpenCode \u540E\u53EF\u7528",
+      disabled: !options.length,
+      onChange: (id) => {
+        if (!id) return;
+        if (!prompt.models.includes(id)) prompt.models = [...prompt.models, id];
+        select.update({ value: null });
+        rebuild();
+        markDirty();
+        updatePreview();
+      }
+    });
+    rebuild();
+  }
+  function buildFirstCard() {
+    const card = el2("div", "settings-card");
+    card.append(sectionHead("\u6BCF\u8F6E\u9996\u6B21\u6CE8\u5165", "\u6309\u6A21\u578B\u5206\u914D", "green"));
+    const body = el2("div", "settings-card-body");
+    const head = el2("div", "mode-head");
+    head.append(el2("span", "row-label", "\u542F\u7528"));
+    const switchSlot = el2("div");
+    head.append(switchSlot);
+    body.append(head);
+    let partSwitch = null;
+    partSwitch = mountSwitch(switchSlot, {
+      label: "",
+      checked: draft.first.enabled,
+      onChange: (checked) => {
+        draft.first.enabled = checked;
+        partSwitch?.update({ checked });
+        markDirty();
+        updatePreview();
+      }
+    });
+    const list = el2("div", "prompt-list");
+    body.append(list);
+    const renderList = () => {
+      list.textContent = "";
+      if (!draft.first.prompts.length) {
+        list.append(empty("\u8FD8\u6CA1\u6709\u63D0\u793A\u8BCD\u3002\u70B9\u4E0B\u9762\u300C\u6DFB\u52A0\u63D0\u793A\u8BCD\u300D\uFF0C\u4E00\u6761\u5BF9\u5E94\u4E00\u7EC4\u6A21\u578B\u3002"));
+        return;
+      }
+      draft.first.prompts.forEach((prompt, index) => {
+        list.append(buildPromptCard(prompt, index, renderList));
+      });
+    };
+    const addRow = el2("div", "diag-actions");
+    body.append(addRow);
+    mountButton(addRow, {
+      label: "\u6DFB\u52A0\u63D0\u793A\u8BCD",
+      size: "sm",
+      variant: "outline",
+      onClick: () => {
+        draft.first.prompts.push({
+          label: `F${draft.first.prompts.length + 1}`,
+          enabled: true,
+          agents: [...KNOWN_AGENTS],
+          models: [],
+          text: ""
+        });
+        renderList();
+        markDirty();
+        updatePreview();
+      }
+    });
+    renderList();
+    card.append(body, settingsNote("\u6309\u987A\u5E8F\u53D6\u7B2C\u4E00\u6761\u300C\u542F\u7528 + agent \u547D\u4E2D + \u6A21\u578B\u547D\u4E2D\u300D\u7684\u6587\u672C\u6CE8\u5165\uFF1B\u6A21\u578B\u7559\u7A7A = \u8BE5\u6761\u5BF9\u6240\u6709\u6A21\u578B\u751F\u6548\u3002"));
+    return card;
+  }
+  function buildPromptCard(prompt, index, rerender) {
+    const wrap = el2("div", "prompt-card");
+    const head = el2("div", "prompt-head");
+    head.append(el2("span", "prompt-title", prompt.label || `F${index + 1}`));
+    const headActions = el2("div", "prompt-head-actions");
+    head.append(headActions);
+    let promptSwitch = null;
+    const switchSlot = el2("div");
+    headActions.append(switchSlot);
+    promptSwitch = mountSwitch(switchSlot, {
+      label: "",
+      checked: prompt.enabled,
+      onChange: (checked) => {
+        prompt.enabled = checked;
+        promptSwitch?.update({ checked });
+        markDirty();
+        updatePreview();
+      }
+    });
+    mountButton(headActions, {
+      label: "\u5220\u9664",
+      size: "xs",
+      variant: "ghost",
+      onClick: () => {
+        draft.first.prompts.splice(index, 1);
+        rerender();
+        markDirty();
+        updatePreview();
+      }
+    });
+    wrap.append(head);
+    const body = el2("div", "prompt-body");
+    const nameSlot = el2("div");
+    body.append(nameSlot);
+    mountTextField(nameSlot, {
+      label: "\u540D\u79F0",
+      value: prompt.label,
+      placeholder: "\u4F8B\u5982 F1 / DeepSeek",
+      onChange: (value) => {
+        prompt.label = value.trim().slice(0, 60);
+        const title = head.querySelector(".prompt-title");
+        if (title) title.textContent = prompt.label || `F${index + 1}`;
+        markDirty();
+        updatePreview();
+      }
+    });
+    const agentRow = el2("div", "part-grid");
+    agentRow.append(el2("span", "row-label", "\u4F5C\u7528 agent"));
+    const agentSlot = el2("div");
+    agentRow.append(agentSlot);
+    body.append(agentRow);
+    buildAgentEditor(agentSlot, prompt);
+    agentRow.append(el2("div", "oc-sdk-field-note", "\u672A\u52FE\u9009 = \u5BF9\u8BE5 agent \u4E0D\u6CE8\u5165\u3002"));
+    const modelRow = el2("div", "part-grid");
+    modelRow.append(el2("span", "row-label", "\u4F5C\u7528\u6A21\u578B"));
+    const modelSlot = el2("div");
+    modelRow.append(modelSlot);
+    body.append(modelRow);
+    buildModelEditor(modelSlot, prompt);
+    modelRow.append(el2("div", "oc-sdk-field-note", "\u7559\u7A7A = \u6240\u6709\u6A21\u578B\uFF1B\u591A\u6761\u547D\u4E2D\u65F6\u53D6\u5217\u8868\u4E2D\u9760\u524D\u7684\u4E00\u6761\u3002"));
+    const textSlot = el2("div");
+    body.append(textSlot);
+    const field = mountTextField(textSlot, {
+      label: "\u6CE8\u5165\u6587\u672C",
+      value: prompt.text,
+      multiline: true,
+      rows: 4,
+      placeholder: "\u8F93\u5165\u8FD9\u6761\u63D0\u793A\u8BCD\u8981\u6CE8\u5165\u7684\u6587\u672C",
+      onChange: (value) => {
+        prompt.text = value;
+        markDirty();
+        updatePreview();
+      }
+    });
+    const area = textSlot.querySelector("textarea");
+    if (area) area.dataset.promptIndex = String(index);
+    const actions = el2("div", "diag-actions");
+    body.append(actions);
+    mountButton(actions, {
+      label: "\u6E05\u7A7A\u6587\u672C",
+      size: "sm",
+      variant: "ghost",
+      onClick: () => {
+        prompt.text = "";
+        field.update({ value: "" });
+        markDirty();
+        updatePreview();
+      }
+    });
+    wrap.append(body);
+    return wrap;
+  }
+  function buildStepCard(title, badge, description) {
+    const part = draft.step;
     const card = el2("div", "settings-card");
     card.append(sectionHead(title, badge, "green"));
     const body = el2("div", "settings-card-body");
@@ -2752,62 +2986,6 @@ ${GUEST_UI_LOOK_CSS}`;
     agentRow.append(
       el2("div", "oc-sdk-field-note", "\u672A\u52FE\u9009 = \u5BF9\u8BE5 agent \u4E0D\u6CE8\u5165\uFF1B\u5168\u90E8\u4E0D\u52FE = \u8FD9\u6BB5\u5173\u95ED\u3002")
     );
-    if (showModels) {
-      const firstPart = part;
-      const modelRow = el2("div", "part-grid");
-      modelRow.append(el2("span", "row-label", "\u4F5C\u7528\u6A21\u578B"));
-      const modelSlot = el2("div");
-      modelRow.append(modelSlot);
-      body.append(modelRow);
-      const chips = el2("div", "agent-chips");
-      const addSlot = el2("div", "agent-extra");
-      modelSlot.append(chips, addSlot);
-      const rebuild = () => {
-        chips.textContent = "";
-        for (const id of firstPart.models) {
-          const wrap = el2("span", "agent-chip-wrap");
-          const chip = el2("span", "agent-chip", id);
-          chip.title = id;
-          const remove = el2("button", "agent-chip-x", "\xD7");
-          remove.type = "button";
-          remove.title = "\u79FB\u9664";
-          remove.addEventListener("click", () => {
-            firstPart.models = firstPart.models.filter((item) => item !== id);
-            rebuild();
-            markDirty();
-            updatePreview();
-          });
-          wrap.append(chip, remove);
-          chips.append(wrap);
-        }
-      };
-      const options = modelCatalog.map((item) => ({
-        id: item.id,
-        label: item.id,
-        hint: item.providerName || ""
-      }));
-      const select = mountSelect(addSlot, {
-        label: "\u6DFB\u52A0\u6A21\u578B",
-        value: null,
-        options,
-        searchable: true,
-        searchPlaceholder: "\u641C\u7D22 provider/model",
-        placeholder: options.length ? "\u9009\u62E9\u8981\u6CE8\u5165 first \u7684\u6A21\u578B" : "\u6A21\u578B\u5217\u8868\u672A\u751F\u6210\uFF0C\u91CD\u542F OpenCode \u540E\u53EF\u7528",
-        disabled: !options.length,
-        onChange: (id) => {
-          if (!id) return;
-          if (!firstPart.models.includes(id)) firstPart.models = [...firstPart.models, id];
-          select.update({ value: null });
-          rebuild();
-          markDirty();
-          updatePreview();
-        }
-      });
-      rebuild();
-      modelRow.append(
-        el2("div", "oc-sdk-field-note", "\u7559\u7A7A = \u5168\u90E8\u6A21\u578B\uFF1B\u9009\u4E2D\u540E\u9700 agent \u4E0E\u6A21\u578B\u540C\u65F6\u547D\u4E2D\u3002")
-      );
-    }
     const textSlot = el2("div");
     body.append(textSlot);
     const field = mountTextField(textSlot, {
@@ -2822,6 +3000,8 @@ ${GUEST_UI_LOOK_CSS}`;
         updatePreview();
       }
     });
+    const area = textSlot.querySelector("textarea");
+    if (area) area.dataset.stepText = "1";
     const actions = el2("div", "diag-actions");
     body.append(actions);
     mountButton(actions, {
@@ -2861,18 +3041,9 @@ ${GUEST_UI_LOOK_CSS}`;
         updatePreview();
       }
     });
+    settingsPage.append(buildFirstCard());
     settingsPage.append(
-      buildPartCard(
-        "first",
-        "\u6BCF\u8F6E\u9996\u6B21\u6CE8\u5165",
-        "\u6BCF\u8F6E\u7B2C\u4E00\u6B21",
-        "\u53EA\u5728\u672C\u8F6E\u7B2C\u4E00\u6B21\u6A21\u578B\u8C03\u7528\u65F6\u4E34\u65F6\u8FFD\u52A0\uFF0C\u9700\u540C\u65F6\u6EE1\u8DB3\u6240\u9009 agent \u4E0E\u6A21\u578B\uFF1B\u6587\u672C\u4E3A\u7A7A\u5C31\u4E0D\u52A0\u8FD9\u4E00\u6BB5\u3002",
-        true
-      )
-    );
-    settingsPage.append(
-      buildPartCard(
-        "step",
+      buildStepCard(
         "\u7EAA\u5F8B\u63D0\u9192\uFF08S\uFF09",
         "\u843D\u76D8",
         "\u7528\u6237\u63D0\u95EE\u65F6\u8FFD\u52A0\u5230\u6D88\u606F\u5C3E\u90E8\u5E76\u843D\u76D8\uFF1B\u4E4B\u540E\u6BCF\u6B65\u4ECE\u5386\u53F2\u8BFB\u53D6\uFF0C\u4E0D\u518D\u91CD\u590D\u6CE8\u5165\u3002\u6587\u672C\u4E3A\u7A7A\u5C31\u4E0D\u52A0\u3002"
@@ -3096,7 +3267,9 @@ ${GUEST_UI_LOOK_CSS}`;
     try {
       const next = normalizeConfig(draft);
       const live = previewValues();
-      next.first.text = live.first;
+      next.first.prompts.forEach((prompt, index) => {
+        if (live.first[index] !== void 0) prompt.text = live.first[index];
+      });
       next.step.text = live.step;
       const payload = JSON.stringify(next, null, 2) + "\n";
       await host.writeFile(CONFIG_PATH, payload);
@@ -3107,7 +3280,10 @@ ${GUEST_UI_LOOK_CSS}`;
         throw new Error("\u5199\u5165\u6821\u9A8C\u5931\u8D25\uFF1A\u6587\u4EF6\u5185\u5BB9\u4E0E\u9762\u677F\u4E0D\u4E00\u81F4");
       }
       config = cloneConfig(next);
-      draft.first.text = next.first.text;
+      next.first.prompts.forEach((prompt, index) => {
+        const held = draft.first.prompts[index];
+        if (held) held.text = prompt.text;
+      });
       draft.step.text = next.step.text;
       dirty = false;
       configError = "";
