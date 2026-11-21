@@ -498,6 +498,14 @@ function liveTextarea(selector: string): string | null {
   return node ? node.value : null;
 }
 
+// Single-line fields (the prompt name) need the same treatment as textareas:
+// an IME commit or a host re-render can leave the control ahead of the draft.
+function liveInput(selector: string): string | null {
+  if (!settingsPage) return null;
+  const node = settingsPage.querySelector(selector) as HTMLInputElement | null;
+  return node ? node.value : null;
+}
+
 function previewValues(): { first: string[]; step: string } {
   // Read the live textarea values, not only the draft: the preview must mirror
   // what is on screen even when a host re-render or IME path skips onChange.
@@ -809,7 +817,7 @@ function buildPromptCard(prompt: FirstPrompt, index: number, rerender: () => voi
 
   const nameSlot = el('div');
   body.append(nameSlot);
-  mountTextField(nameSlot, {
+  const nameField = mountTextField(nameSlot, {
     label: '名称',
     value: prompt.label,
     placeholder: '例如 F1 / DeepSeek',
@@ -821,6 +829,21 @@ function buildPromptCard(prompt: FirstPrompt, index: number, rerender: () => voi
       updatePreview();
     },
   });
+  // Saving reads this control directly, so a missed onChange (IME commit,
+  // autofill, host re-render) can no longer write an empty name.
+  const nameInput = nameSlot.querySelector('input');
+  if (nameInput) {
+    nameInput.dataset.promptName = String(index);
+    // IME commits can land without an `input` event; sync on blur too.
+    nameInput.addEventListener('change', () => {
+      prompt.label = nameInput.value.trim().slice(0, 60);
+      const title = head.querySelector('.prompt-title');
+      if (title) title.textContent = prompt.label || `F${index + 1}`;
+      markDirty();
+      updatePreview();
+    });
+  }
+  void nameField;
 
   const agentRow = el('div', 'part-grid');
   agentRow.append(el('span', 'row-label', '作用 agent'));
@@ -1233,6 +1256,10 @@ async function saveConfig(auto = false): Promise<void> {
     const live = previewValues();
     draft.first.prompts.forEach((prompt, index) => {
       if (live.first[index] !== undefined) prompt.text = live.first[index];
+      // Names come from the live controls too: mountTextField only reports on
+      // `input`, and an IME commit or a host re-render can skip that.
+      const name = liveInput(`input[data-prompt-name="${index}"]`);
+      if (name !== null) prompt.label = name.trim().slice(0, 60);
     });
     draft.step.text = live.step;
 
@@ -1268,7 +1295,12 @@ async function saveConfig(auto = false): Promise<void> {
     configError = '';
     saveHandle?.update({ disabled: true });
     if (saveStateEl) saveStateEl.textContent = auto ? '已自动保存 · 下一轮生效' : '已保存 · 下一轮生效';
-    if (!auto) setBanner('info', '已保存', '配置已写入并校验，插件下一轮读取；无需重启。');
+    if (!auto) {
+      const names = next.first.prompts
+        .map((prompt, index) => `F${index + 1}「${prompt.label || '未命名'}」`)
+        .join('、');
+      setBanner('info', '已保存', names ? `已写入并校验：${names}` : '配置已写入并校验，插件下一轮读取；无需重启。');
+    }
     renderOverview();
   } catch (err) {
     const code = err instanceof Error && 'code' in err ? ` [${String((err as { code?: unknown }).code)}]` : '';

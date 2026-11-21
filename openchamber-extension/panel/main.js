@@ -2426,6 +2426,11 @@ ${GUEST_UI_LOOK_CSS}`;
     const node = settingsPage.querySelector(selector);
     return node ? node.value : null;
   }
+  function liveInput(selector) {
+    if (!settingsPage) return null;
+    const node = settingsPage.querySelector(selector);
+    return node ? node.value : null;
+  }
   function previewValues() {
     const first = draft.first.prompts.map((prompt, index) => {
       const live = liveTextarea(`textarea[data-prompt-index="${index}"]`);
@@ -2701,7 +2706,7 @@ ${GUEST_UI_LOOK_CSS}`;
     const body = el2("div", "prompt-body");
     const nameSlot = el2("div");
     body.append(nameSlot);
-    mountTextField(nameSlot, {
+    const nameField = mountTextField(nameSlot, {
       label: "\u540D\u79F0",
       value: prompt.label,
       placeholder: "\u4F8B\u5982 F1 / DeepSeek",
@@ -2713,6 +2718,18 @@ ${GUEST_UI_LOOK_CSS}`;
         updatePreview();
       }
     });
+    const nameInput = nameSlot.querySelector("input");
+    if (nameInput) {
+      nameInput.dataset.promptName = String(index);
+      nameInput.addEventListener("change", () => {
+        prompt.label = nameInput.value.trim().slice(0, 60);
+        const title = head.querySelector(".prompt-title");
+        if (title) title.textContent = prompt.label || `F${index + 1}`;
+        markDirty();
+        updatePreview();
+      });
+    }
+    void nameField;
     const agentRow = el2("div", "part-grid");
     agentRow.append(el2("span", "row-label", "\u4F5C\u7528 agent"));
     const agentSlot = el2("div");
@@ -3071,6 +3088,8 @@ ${GUEST_UI_LOOK_CSS}`;
       const live = previewValues();
       draft.first.prompts.forEach((prompt, index) => {
         if (live.first[index] !== void 0) prompt.text = live.first[index];
+        const name = liveInput(`input[data-prompt-name="${index}"]`);
+        if (name !== null) prompt.label = name.trim().slice(0, 60);
       });
       draft.step.text = live.step;
       const next = normalizeConfig(draft);
@@ -3098,7 +3117,10 @@ ${GUEST_UI_LOOK_CSS}`;
       configError = "";
       saveHandle?.update({ disabled: true });
       if (saveStateEl) saveStateEl.textContent = auto ? "\u5DF2\u81EA\u52A8\u4FDD\u5B58 \xB7 \u4E0B\u4E00\u8F6E\u751F\u6548" : "\u5DF2\u4FDD\u5B58 \xB7 \u4E0B\u4E00\u8F6E\u751F\u6548";
-      if (!auto) setBanner("info", "\u5DF2\u4FDD\u5B58", "\u914D\u7F6E\u5DF2\u5199\u5165\u5E76\u6821\u9A8C\uFF0C\u63D2\u4EF6\u4E0B\u4E00\u8F6E\u8BFB\u53D6\uFF1B\u65E0\u9700\u91CD\u542F\u3002");
+      if (!auto) {
+        const names = next.first.prompts.map((prompt, index) => `F${index + 1}\u300C${prompt.label || "\u672A\u547D\u540D"}\u300D`).join("\u3001");
+        setBanner("info", "\u5DF2\u4FDD\u5B58", names ? `\u5DF2\u5199\u5165\u5E76\u6821\u9A8C\uFF1A${names}` : "\u914D\u7F6E\u5DF2\u5199\u5165\u5E76\u6821\u9A8C\uFF0C\u63D2\u4EF6\u4E0B\u4E00\u8F6E\u8BFB\u53D6\uFF1B\u65E0\u9700\u91CD\u542F\u3002");
+      }
       renderOverview();
     } catch (err) {
       const code = err instanceof Error && "code" in err ? ` [${String(err.code)}]` : "";
