@@ -1747,18 +1747,6 @@ ${GUEST_UI_LOOK_CSS}`;
       node.setAttribute(name, value);
     }
   };
-  var onOutsideClick = (node, handler) => {
-    const listener = (event) => {
-      if (event.target instanceof Node && node.contains(event.target)) {
-        return;
-      }
-      handler();
-    };
-    document.addEventListener("pointerdown", listener, true);
-    return () => {
-      document.removeEventListener("pointerdown", listener, true);
-    };
-  };
 
   // ../session-usage/node_modules/@openchamber/sdk/dist/ui/button.js
   var ring = () => {
@@ -1912,243 +1900,6 @@ ${GUEST_UI_LOOK_CSS}`;
     }
     const target = enabled[Math.min(enabled.length - 1, Math.max(0, index + (key === "next" ? 1 : -1)))];
     return target?.id ?? null;
-  };
-
-  // ../session-usage/node_modules/@openchamber/sdk/dist/ui/option.js
-  var optionId = (uid, id) => `${uid}-${id ?? ""}`;
-  var createOption = (uid, role, spec, on) => {
-    const node = button("oc-sdk-option");
-    node.id = optionId(uid, spec.id);
-    node.setAttribute("role", role);
-    node.tabIndex = -1;
-    node.disabled = Boolean(spec.disabled);
-    if (role === "option") {
-      node.setAttribute("aria-selected", spec.selected ? "true" : "false");
-    }
-    node.dataset.destructive = spec.destructive ? "true" : "false";
-    const label = el("span", "oc-sdk-option-label");
-    label.textContent = spec.label;
-    node.append(label);
-    if (spec.hint) {
-      const hint = el("span", "oc-sdk-option-hint");
-      hint.textContent = spec.hint;
-      node.append(hint);
-    }
-    if (role === "option") {
-      node.dataset.mark = "check";
-      const check = el("span", "oc-sdk-option-check");
-      check.append(icon("check", 14));
-      node.append(check);
-    }
-    node.addEventListener("pointerenter", on.hover);
-    node.addEventListener("click", on.pick);
-    return node;
-  };
-  var highlightOption = (container, focusOwner, uid, id) => {
-    const target = optionId(uid, id);
-    for (const child of Array.from(container.children)) {
-      if (child instanceof HTMLElement && child.classList.contains("oc-sdk-option")) {
-        child.dataset.active = child.id === target ? "true" : "false";
-      }
-    }
-    setAttr(focusOwner, "aria-activedescendant", id ? target : null);
-    container.querySelector('[data-active="true"]')?.scrollIntoView({ block: "nearest" });
-  };
-
-  // ../session-usage/node_modules/@openchamber/sdk/dist/ui/popup.js
-  var placePopup = (popup, trigger) => {
-    const rect = trigger.getBoundingClientRect();
-    popup.style.minWidth = `${Math.round(rect.width)}px`;
-    popup.style.left = `${Math.round(rect.left)}px`;
-    popup.style.top = `${Math.round(rect.bottom + 4)}px`;
-    const height = popup.offsetHeight;
-    const roomBelow = window.innerHeight - rect.bottom - 8;
-    if (height > roomBelow && rect.top - 8 > roomBelow) {
-      popup.style.top = `${Math.max(8, Math.round(rect.top - 4 - height))}px`;
-    }
-    const overflow = rect.left + popup.offsetWidth - window.innerWidth + 8;
-    if (overflow > 0) {
-      popup.style.left = `${Math.max(8, Math.round(rect.left - overflow))}px`;
-    }
-  };
-  var openPopup = (host2, trigger, popup, close) => {
-    host2.append(popup);
-    placePopup(popup, trigger);
-    const stopOutside = onOutsideClick(host2, close);
-    const onResize = () => {
-      close();
-    };
-    const onScroll = (event) => {
-      if (event.target instanceof Node && popup.contains(event.target)) {
-        return;
-      }
-      close();
-    };
-    window.addEventListener("resize", onResize);
-    window.addEventListener("scroll", onScroll, true);
-    return () => {
-      stopOutside();
-      window.removeEventListener("resize", onResize);
-      window.removeEventListener("scroll", onScroll, true);
-      popup.remove();
-    };
-  };
-
-  // ../session-usage/node_modules/@openchamber/sdk/dist/ui/select.js
-  var filterSelectOptions = (options, query) => {
-    const needle = query.trim().toLowerCase();
-    if (!needle) {
-      return [...options];
-    }
-    return options.filter((option) => option.label.toLowerCase().includes(needle) || option.id.toLowerCase().includes(needle));
-  };
-  var selectCount = 0;
-  var mountSelect = (root2, initial) => {
-    ensureStyle(UI_CSS);
-    let props = initial;
-    const uid = `oc-sdk-select-${selectCount += 1}`;
-    const wrap = el("div", "oc-sdk oc-sdk-select");
-    const caption = el("span", "oc-sdk-field-label");
-    caption.id = `${uid}-label`;
-    const trigger = button("oc-sdk-trigger");
-    trigger.setAttribute("aria-haspopup", "listbox");
-    trigger.setAttribute("aria-labelledby", caption.id);
-    const value = el("span", "oc-sdk-trigger-value");
-    trigger.append(value, icon("chevron", 14, "oc-sdk-trigger-chevron"));
-    wrap.append(caption, trigger);
-    root2.append(wrap);
-    let query = "";
-    let activeId = null;
-    let closePopup = null;
-    const popup = el("div", "oc-sdk oc-sdk-popup");
-    const searchSlot = el("div", "oc-sdk-popup-search");
-    const search = el("input", "oc-sdk-input");
-    search.type = "text";
-    search.autocomplete = "off";
-    searchSlot.append(search);
-    const listbox = el("div");
-    listbox.setAttribute("role", "listbox");
-    listbox.tabIndex = -1;
-    popup.append(listbox);
-    const visible = () => filterSelectOptions(props.options, props.searchable ? query : "");
-    const focusOwner = () => props.searchable ? search : listbox;
-    const setActive = (id) => {
-      activeId = id;
-      highlightOption(listbox, focusOwner(), uid, id);
-    };
-    const paintOptions = () => {
-      clearNode(listbox);
-      const options = visible();
-      if (options.length === 0) {
-        const empty2 = el("div", "oc-sdk-popup-empty");
-        empty2.textContent = "No matches";
-        listbox.append(empty2);
-      }
-      for (const option of options) {
-        listbox.append(createOption(uid, "option", { ...option, selected: option.id === props.value }, {
-          hover: () => setActive(option.id),
-          pick: () => pick(option.id)
-        }));
-      }
-      setActive(options.some((option) => option.id === activeId) ? activeId : options[0]?.id ?? null);
-    };
-    const close = () => {
-      const dispose = closePopup;
-      closePopup = null;
-      dispose?.();
-      query = "";
-      search.value = "";
-      trigger.setAttribute("aria-expanded", "false");
-    };
-    const open = () => {
-      if (closePopup || props.disabled) {
-        return;
-      }
-      activeId = props.value;
-      search.placeholder = props.searchPlaceholder ?? "Search";
-      if (props.searchable)
-        popup.prepend(searchSlot);
-      else
-        searchSlot.remove();
-      paintOptions();
-      closePopup = openPopup(wrap, trigger, popup, close);
-      trigger.setAttribute("aria-expanded", "true");
-      focusOwner().focus();
-    };
-    const pick = (id) => {
-      close();
-      trigger.focus();
-      if (id !== props.value)
-        props.onChange(id);
-    };
-    const onTriggerClick = () => {
-      if (closePopup)
-        close();
-      else
-        open();
-    };
-    const onTriggerKey = (event) => {
-      if (!closePopup && navigationKey(event)) {
-        event.preventDefault();
-        open();
-      }
-    };
-    const onPopupKey = (event) => {
-      const step = navigationKey(event);
-      if (step) {
-        event.preventDefault();
-        setActive(moveListSelection(visible(), activeId, step));
-      } else if (event.key === "Enter") {
-        event.preventDefault();
-        if (activeId)
-          pick(activeId);
-      } else if (event.key === "Escape") {
-        event.preventDefault();
-        close();
-        trigger.focus();
-      } else if (props.searchable && event.target !== search && event.key.length === 1 && !event.ctrlKey && !event.metaKey) {
-        search.focus();
-      }
-    };
-    const onSearchInput = () => {
-      query = search.value;
-      paintOptions();
-    };
-    const onFocusOut = (event) => {
-      if (closePopup && !(event.relatedTarget instanceof Node && wrap.contains(event.relatedTarget)))
-        close();
-    };
-    const paint = () => {
-      setText(caption, props.label);
-      caption.hidden = !props.label;
-      const current = props.options.find((option) => option.id === props.value);
-      setText(value, current?.label ?? props.placeholder ?? "Select");
-      value.dataset.empty = current ? "false" : "true";
-      trigger.disabled = Boolean(props.disabled);
-      if (closePopup)
-        paintOptions();
-    };
-    trigger.addEventListener("click", onTriggerClick);
-    trigger.addEventListener("keydown", onTriggerKey);
-    popup.addEventListener("keydown", onPopupKey);
-    search.addEventListener("input", onSearchInput);
-    wrap.addEventListener("focusout", onFocusOut);
-    paint();
-    return {
-      update: (next) => {
-        props = { ...props, ...next };
-        paint();
-      },
-      dispose: () => {
-        close();
-        trigger.removeEventListener("click", onTriggerClick);
-        trigger.removeEventListener("keydown", onTriggerKey);
-        popup.removeEventListener("keydown", onPopupKey);
-        search.removeEventListener("input", onSearchInput);
-        wrap.removeEventListener("focusout", onFocusOut);
-        wrap.remove();
-      }
-    };
   };
 
   // ../session-usage/node_modules/@openchamber/sdk/dist/ui/checkbox.js
@@ -2599,9 +2350,15 @@ ${GUEST_UI_LOOK_CSS}`;
     { label: "\u65F6\u95F4", width: "96px" },
     { label: "\u4F1A\u8BDD", width: "auto" },
     { label: "\u7ED3\u679C", width: "110px" },
+    { label: "\u63D0\u793A\u8BCD", width: "120px" },
     { label: "\u6A21\u578B", width: "auto" },
     { label: "\u9519\u8BEF", width: "110px" }
   ];
+  function promptCell(row) {
+    if (typeof row.promptIndex !== "number") return "\u2014";
+    const name = (row.promptLabel || "").trim();
+    return name ? `F${row.promptIndex + 1} ${name}` : `F${row.promptIndex + 1}`;
+  }
   function eventTable(rows) {
     const wrap = el2("div", "table-wrap");
     const table = el2("table", "event-table");
@@ -2624,6 +2381,7 @@ ${GUEST_UI_LOOK_CSS}`;
         el2("td", "num", fmtDayTime(row.ts)),
         session,
         el2("td", row.error ? "bad" : "ok", injectionLabel(row)),
+        el2("td", "mono", promptCell(row)),
         el2("td", "mono", row.model || "\u2014"),
         el2("td", row.error ? "bad" : "", row.error || "")
       );
@@ -2784,29 +2542,74 @@ ${GUEST_UI_LOOK_CSS}`;
         wrap.append(chip, remove);
         chips.append(wrap);
       }
+      if (panel.hidden) trigger.textContent = `\u9009\u62E9\u6A21\u578B\uFF08${prompt.models.length}\uFF09`;
     };
-    const options = modelCatalog.map((item) => ({
-      id: item.id,
-      label: item.id,
-      hint: item.providerName || ""
-    }));
-    const select = mountSelect(addSlot, {
-      label: "\u6DFB\u52A0\u6A21\u578B",
-      value: null,
-      options,
-      searchable: true,
-      searchPlaceholder: "\u641C\u7D22 provider/model",
-      placeholder: options.length ? "\u9009\u62E9\u8FD9\u6761\u63D0\u793A\u8BCD\u6CE8\u5165\u7684\u6A21\u578B" : "\u6A21\u578B\u5217\u8868\u672A\u751F\u6210\uFF0C\u91CD\u542F OpenCode \u540E\u53EF\u7528",
-      disabled: !options.length,
-      onChange: (id) => {
-        if (!id) return;
-        if (!prompt.models.includes(id)) prompt.models = [...prompt.models, id];
-        select.update({ value: null });
-        rebuild();
-        markDirty();
-        updatePreview();
-      }
+    const picker = el2("div", "model-picker");
+    const trigger = el2("button", "model-trigger", "\u9009\u62E9\u6A21\u578B");
+    trigger.type = "button";
+    trigger.setAttribute("aria-expanded", "false");
+    const panel = el2("div", "model-panel");
+    panel.hidden = true;
+    const search = el2("input", "oc-sdk-input model-search");
+    search.type = "search";
+    search.autocomplete = "off";
+    search.placeholder = modelCatalog.length ? "\u641C\u7D22 provider/model\uFF0C\u70B9\u51FB\u6DFB\u52A0" : "\u6A21\u578B\u5217\u8868\u672A\u751F\u6210\uFF0C\u91CD\u542F OpenCode \u540E\u53EF\u7528";
+    search.disabled = !modelCatalog.length;
+    const list = el2("div", "model-list");
+    panel.append(search, list);
+    picker.append(trigger, panel);
+    addSlot.append(picker);
+    const setOpen = (open) => {
+      panel.hidden = !open;
+      picker.classList.toggle("is-open", open);
+      trigger.setAttribute("aria-expanded", open ? "true" : "false");
+      trigger.textContent = open ? "\u6536\u8D77\u6A21\u578B\u5217\u8868" : `\u9009\u62E9\u6A21\u578B\uFF08${prompt.models.length}\uFF09`;
+      if (open) search.focus();
+    };
+    trigger.addEventListener("click", (event) => {
+      event.stopPropagation();
+      setOpen(panel.hidden);
     });
+    const closeOnOutside = (event) => {
+      if (!picker.isConnected) {
+        document.removeEventListener("click", closeOnOutside, true);
+        return;
+      }
+      if (!picker.contains(event.target)) setOpen(false);
+    };
+    document.addEventListener("click", closeOnOutside, true);
+    const paintList = () => {
+      list.textContent = "";
+      const needle = search.value.trim().toLowerCase();
+      const matched = modelCatalog.filter(
+        (item) => !needle || item.id.toLowerCase().includes(needle)
+      );
+      if (!matched.length) {
+        list.append(el2("div", "model-empty", modelCatalog.length ? "\u6CA1\u6709\u5339\u914D\u7684\u6A21\u578B" : "\u6A21\u578B\u5217\u8868\u672A\u751F\u6210"));
+        return;
+      }
+      for (const item of matched.slice(0, 300)) {
+        const picked = prompt.models.includes(item.id);
+        const row = el2("button", "model-row");
+        row.type = "button";
+        row.setAttribute("aria-pressed", picked ? "true" : "false");
+        row.append(el2("span", "model-row-id", item.id));
+        if (item.providerName) row.append(el2("span", "model-row-src", item.providerName));
+        row.addEventListener("click", () => {
+          prompt.models = picked ? prompt.models.filter((value) => value !== item.id) : [...prompt.models, item.id];
+          rebuild();
+          paintList();
+          markDirty();
+          updatePreview();
+        });
+        list.append(row);
+      }
+      if (matched.length > 300) {
+        list.append(el2("div", "model-empty", `\u4EC5\u663E\u793A\u524D 300 \u6761\uFF0C\u5171 ${matched.length} \u6761\uFF0C\u8BF7\u8F93\u5165\u5173\u952E\u5B57\u7F29\u5C0F\u8303\u56F4`));
+      }
+    };
+    search.addEventListener("input", paintList);
+    paintList();
     rebuild();
   }
   function buildFirstCard() {
@@ -3265,12 +3068,12 @@ ${GUEST_UI_LOOK_CSS}`;
     saveHandle?.update({ loading: !auto });
     if (auto && saveStateEl) saveStateEl.textContent = "\u81EA\u52A8\u4FDD\u5B58\u4E2D\u2026";
     try {
-      const next = normalizeConfig(draft);
       const live = previewValues();
-      next.first.prompts.forEach((prompt, index) => {
+      draft.first.prompts.forEach((prompt, index) => {
         if (live.first[index] !== void 0) prompt.text = live.first[index];
       });
-      next.step.text = live.step;
+      draft.step.text = live.step;
+      const next = normalizeConfig(draft);
       const payload = JSON.stringify(next, null, 2) + "\n";
       await host.writeFile(CONFIG_PATH, payload);
       const backRaw = await readText(CONFIG_PATH);
@@ -3280,9 +3083,15 @@ ${GUEST_UI_LOOK_CSS}`;
         throw new Error("\u5199\u5165\u6821\u9A8C\u5931\u8D25\uFF1A\u6587\u4EF6\u5185\u5BB9\u4E0E\u9762\u677F\u4E0D\u4E00\u81F4");
       }
       config = cloneConfig(next);
+      const prompts = draft.first.prompts;
       next.first.prompts.forEach((prompt, index) => {
-        const held = draft.first.prompts[index];
-        if (held) held.text = prompt.text;
+        const held = prompts[index];
+        if (!held) return;
+        held.label = prompt.label;
+        held.enabled = prompt.enabled;
+        held.agents = [...prompt.agents];
+        held.models = [...prompt.models];
+        held.text = prompt.text;
       });
       draft.step.text = next.step.text;
       dirty = false;
@@ -3292,8 +3101,10 @@ ${GUEST_UI_LOOK_CSS}`;
       if (!auto) setBanner("info", "\u5DF2\u4FDD\u5B58", "\u914D\u7F6E\u5DF2\u5199\u5165\u5E76\u6821\u9A8C\uFF0C\u63D2\u4EF6\u4E0B\u4E00\u8F6E\u8BFB\u53D6\uFF1B\u65E0\u9700\u91CD\u542F\u3002");
       renderOverview();
     } catch (err) {
-      if (saveStateEl) saveStateEl.textContent = auto ? "\u81EA\u52A8\u4FDD\u5B58\u5931\u8D25" : "\u4FDD\u5B58\u5931\u8D25";
-      setBanner("error", auto ? "\u81EA\u52A8\u4FDD\u5B58\u5931\u8D25" : "\u4FDD\u5B58\u5931\u8D25", err instanceof Error ? err.message : String(err));
+      const code = err instanceof Error && "code" in err ? ` [${String(err.code)}]` : "";
+      const message = err instanceof Error ? err.message : String(err);
+      if (saveStateEl) saveStateEl.textContent = (auto ? "\u81EA\u52A8\u4FDD\u5B58\u5931\u8D25" : "\u4FDD\u5B58\u5931\u8D25") + code;
+      setBanner("error", auto ? "\u81EA\u52A8\u4FDD\u5B58\u5931\u8D25" : "\u4FDD\u5B58\u5931\u8D25", `${message}${code}`);
     } finally {
       saveHandle?.update({ loading: false });
     }

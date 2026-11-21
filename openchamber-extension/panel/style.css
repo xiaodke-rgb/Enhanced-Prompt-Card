@@ -855,6 +855,106 @@ td.num { text-align: right; font-variant-numeric: tabular-nums; white-space: now
   padding-top: 6px;
 }
 
+/* The SDK select's fixed-position popup gets clipped inside the panel frame, so
+   models are picked from this list instead: it scrolls in place. */
+.model-picker {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.model-trigger {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  padding: 5px 8px;
+  border: 1px solid color-mix(in srgb, var(--ic-border) 70%, transparent);
+  border-radius: 6px;
+  background: transparent;
+  color: var(--ic-fg);
+  font-size: 11.5px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.model-trigger::after {
+  content: "▾";
+  margin-left: auto;
+  color: var(--ic-muted);
+  font-size: 10px;
+}
+
+.model-picker.is-open .model-trigger::after {
+  content: "▴";
+}
+
+.model-trigger:hover {
+  background: color-mix(in srgb, var(--ic-fg) 6%, transparent);
+}
+
+.model-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.model-panel[hidden] {
+  display: none;
+}
+
+.model-list {
+  max-height: 150px;
+  overflow-y: auto;
+  border: 1px solid color-mix(in srgb, var(--ic-border) 60%, transparent);
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--ic-subtle) 45%, transparent);
+}
+
+.model-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  padding: 4px 7px;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  color: var(--ic-fg);
+  font-family: var(--font-mono, ui-monospace, monospace);
+  font-size: 11px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.model-row:hover {
+  background: color-mix(in srgb, var(--ic-fg) 8%, transparent);
+}
+
+.model-row[aria-pressed="true"] {
+  background: color-mix(in srgb, var(--ic-primary) 18%, transparent);
+}
+
+.model-row-id {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.model-row-src {
+  flex: 0 0 auto;
+  color: var(--ic-muted);
+  font-size: 10px;
+}
+
+.model-empty {
+  padding: 6px 7px;
+  color: var(--ic-muted);
+  font-size: 11px;
+}
+
 /* Event tables: same layout in overview and diagnostics */.event-table {
   width: 100%;
   min-width: 620px;

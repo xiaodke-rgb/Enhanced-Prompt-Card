@@ -12,7 +12,6 @@ import {
   applyHostReady,
   mountBanner,
   mountButton,
-  mountSelect,
   mountSwitch,
   mountTabs,
   mountTextField,
@@ -415,9 +414,16 @@ const EVENT_COLUMNS: Array<{ label: string; width: string }> = [
   { label: '时间', width: '96px' },
   { label: '会话', width: 'auto' },
   { label: '结果', width: '110px' },
+  { label: '提示词', width: '120px' },
   { label: '模型', width: 'auto' },
   { label: '错误', width: '110px' },
 ];
+
+function promptCell(row: EventRow): string {
+  if (typeof row.promptIndex !== 'number') return '—';
+  const name = (row.promptLabel || '').trim();
+  return name ? `F${row.promptIndex + 1} ${name}` : `F${row.promptIndex + 1}`;
+}
 
 function eventTable(rows: EventRow[]): HTMLElement {
   const wrap = el('div', 'table-wrap');
@@ -441,6 +447,7 @@ function eventTable(rows: EventRow[]): HTMLElement {
       el('td', 'num', fmtDayTime(row.ts)),
       session,
       el('td', row.error ? 'bad' : 'ok', injectionLabel(row)),
+      el('td', 'mono', promptCell(row)),
       el('td', 'mono', row.model || '—'),
       el('td', row.error ? 'bad' : '', row.error || ''),
     );
@@ -617,30 +624,85 @@ function buildModelEditor(slot: HTMLElement, prompt: FirstPrompt): void {
       wrap.append(chip, remove);
       chips.append(wrap);
     }
+    if (panel.hidden) trigger.textContent = `选择模型（${prompt.models.length}）`;
   };
 
-  const options = modelCatalog.map((item) => ({
-    id: item.id,
-    label: item.id,
-    hint: item.providerName || '',
-  }));
-  const select = mountSelect(addSlot, {
-    label: '添加模型',
-    value: null,
-    options,
-    searchable: true,
-    searchPlaceholder: '搜索 provider/model',
-    placeholder: options.length ? '选择这条提示词注入的模型' : '模型列表未生成，重启 OpenCode 后可用',
-    disabled: !options.length,
-    onChange: (id) => {
-      if (!id) return;
-      if (!prompt.models.includes(id)) prompt.models = [...prompt.models, id];
-      select.update({ value: null });
-      rebuild();
-      markDirty();
-      updatePreview();
-    },
+  // The SDK's select opens a fixed-position popup, which the panel's iframe
+  // clips to a couple of rows. Use an in-card dropdown instead: click the
+  // trigger to expand a search box plus a scrollable list, click outside to
+  // collapse. Everything stays inside the card, so nothing gets clipped.
+  const picker = el('div', 'model-picker');
+  const trigger = el('button', 'model-trigger', '选择模型');
+  trigger.type = 'button';
+  trigger.setAttribute('aria-expanded', 'false');
+  const panel = el('div', 'model-panel');
+  panel.hidden = true;
+  const search = el('input', 'oc-sdk-input model-search');
+  search.type = 'search';
+  search.autocomplete = 'off';
+  search.placeholder = modelCatalog.length ? '搜索 provider/model，点击添加' : '模型列表未生成，重启 OpenCode 后可用';
+  search.disabled = !modelCatalog.length;
+  const list = el('div', 'model-list');
+  panel.append(search, list);
+  picker.append(trigger, panel);
+  addSlot.append(picker);
+
+  const setOpen = (open: boolean): void => {
+    panel.hidden = !open;
+    picker.classList.toggle('is-open', open);
+    trigger.setAttribute('aria-expanded', open ? 'true' : 'false');
+    trigger.textContent = open ? '收起模型列表' : `选择模型（${prompt.models.length}）`;
+    if (open) search.focus();
+  };
+  trigger.addEventListener('click', (event) => {
+    event.stopPropagation();
+    setOpen(panel.hidden);
   });
+  const closeOnOutside = (event: MouseEvent): void => {
+    if (!picker.isConnected) {
+      document.removeEventListener('click', closeOnOutside, true);
+      return;
+    }
+    if (!picker.contains(event.target as Node)) setOpen(false);
+  };
+  document.addEventListener('click', closeOnOutside, true);
+
+  const paintList = (): void => {
+    list.textContent = '';
+    const needle = search.value.trim().toLowerCase();
+    const matched = modelCatalog.filter(
+      (item) => !needle || item.id.toLowerCase().includes(needle),
+    );
+    if (!matched.length) {
+      list.append(el('div', 'model-empty', modelCatalog.length ? '没有匹配的模型' : '模型列表未生成'));
+      return;
+    }
+    for (const item of matched.slice(0, 300)) {
+      const picked = prompt.models.includes(item.id);
+      const row = el('button', 'model-row');
+      row.type = 'button';
+      row.setAttribute('aria-pressed', picked ? 'true' : 'false');
+      row.append(el('span', 'model-row-id', item.id));
+      if (item.providerName) row.append(el('span', 'model-row-src', item.providerName));
+      row.addEventListener('click', () => {
+        // Toggle: the same list both adds and removes, chips above stay the view.
+        prompt.models = picked
+          ? prompt.models.filter((value) => value !== item.id)
+          : [...prompt.models, item.id];
+        rebuild();
+        paintList();
+        markDirty();
+        updatePreview();
+      });
+      list.append(row);
+    }
+    if (matched.length > 300) {
+      list.append(el('div', 'model-empty', `仅显示前 300 条，共 ${matched.length} 条，请输入关键字缩小范围`));
+    }
+  };
+
+  search.addEventListener('input', paintList);
+  paintList();
   rebuild();
 }
 
@@ -1163,13 +1225,18 @@ async function saveConfig(auto = false): Promise<void> {
   saveHandle?.update({ loading: !auto });
   if (auto && saveStateEl) saveStateEl.textContent = '自动保存中…';
   try {
-    const next = normalizeConfig(draft);
-    // Save what is on screen, not a possibly stale draft copy.
+    // The draft already holds every control's value except the textarea, which a
+    // host re-render or an IME path can leave ahead of the draft. Bring the
+    // draft up to date first, then normalise ONCE: writing a half-normalised
+    // object and comparing it to the normalised read-back always fails on a
+    // trailing newline or space, which is what made saving look broken.
     const live = previewValues();
-    next.first.prompts.forEach((prompt, index) => {
+    draft.first.prompts.forEach((prompt, index) => {
       if (live.first[index] !== undefined) prompt.text = live.first[index];
     });
-    next.step.text = live.step;
+    draft.step.text = live.step;
+
+    const next = normalizeConfig(draft);
     const payload = JSON.stringify(next, null, 2) + '\n';
     await host.writeFile(CONFIG_PATH, payload);
 
@@ -1184,9 +1251,17 @@ async function saveConfig(auto = false): Promise<void> {
     config = cloneConfig(next);
     // Keep the draft object identity: the built controls hold references to its
     // parts, and replacing it would leave them editing a detached copy.
+    const prompts = draft.first.prompts;
     next.first.prompts.forEach((prompt, index) => {
-      const held = draft.first.prompts[index];
-      if (held) held.text = prompt.text;
+      const held = prompts[index];
+      if (!held) return;
+      // Copy every field back, not just the text: the controls hold these
+      // objects, and a field left behind silently reverts on the next save.
+      held.label = prompt.label;
+      held.enabled = prompt.enabled;
+      held.agents = [...prompt.agents];
+      held.models = [...prompt.models];
+      held.text = prompt.text;
     });
     draft.step.text = next.step.text;
     dirty = false;
@@ -1196,8 +1271,10 @@ async function saveConfig(auto = false): Promise<void> {
     if (!auto) setBanner('info', '已保存', '配置已写入并校验，插件下一轮读取；无需重启。');
     renderOverview();
   } catch (err) {
-    if (saveStateEl) saveStateEl.textContent = auto ? '自动保存失败' : '保存失败';
-    setBanner('error', auto ? '自动保存失败' : '保存失败', err instanceof Error ? err.message : String(err));
+    const code = err instanceof Error && 'code' in err ? ` [${String((err as { code?: unknown }).code)}]` : '';
+    const message = err instanceof Error ? err.message : String(err);
+    if (saveStateEl) saveStateEl.textContent = (auto ? '自动保存失败' : '保存失败') + code;
+    setBanner('error', auto ? '自动保存失败' : '保存失败', `${message}${code}`);
   } finally {
     saveHandle?.update({ loading: false });
   }
