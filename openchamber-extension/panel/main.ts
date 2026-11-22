@@ -652,7 +652,14 @@ function buildModelEditor(slot: HTMLElement, prompt: FirstPrompt): void {
   search.disabled = !modelCatalog.length;
   const list = el('div', 'model-list');
   panel.append(search, list);
-  picker.append(trigger, panel);
+  // The catalog is a file the plugin rewrites when providers change; reload it
+  // without reopening the panel so a newly added provider shows up.
+  const refresh = el('button', 'model-refresh', '刷新');
+  refresh.type = 'button';
+  refresh.title = '重新读取模型列表';
+  const triggerRow = el('div', 'model-trigger-row');
+  triggerRow.append(trigger, refresh);
+  picker.append(triggerRow, panel);
   addSlot.append(picker);
 
   const setOpen = (open: boolean): void => {
@@ -710,6 +717,24 @@ function buildModelEditor(slot: HTMLElement, prompt: FirstPrompt): void {
   };
 
   search.addEventListener('input', paintList);
+
+  const reloadCatalog = async (): Promise<void> => {
+    refresh.disabled = true;
+    refresh.textContent = '刷新中';
+    await loadModels();
+    refresh.disabled = false;
+    refresh.textContent = '刷新';
+    search.disabled = !modelCatalog.length;
+    search.placeholder = modelCatalog.length
+      ? '搜索 provider/model，点击添加'
+      : '模型列表未生成，重启 OpenCode 后可用';
+    paintList();
+  };
+  refresh.addEventListener('click', (event) => {
+    event.stopPropagation();
+    void reloadCatalog();
+  });
+
   paintList();
   rebuild();
 }

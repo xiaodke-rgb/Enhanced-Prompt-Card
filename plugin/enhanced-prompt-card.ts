@@ -195,32 +195,59 @@ function loadConfig(): Config {
   }
 }
 
-// Write a compact catalog for the panel's model picker. Prefer the runtime
-// provider list (the same source OpenCode's own model picker uses); fall back
-// to the models enabled in opencode.json when the runtime API is unavailable.
+// Write a compact catalog for the panel's model picker. The runtime provider
+// list and the providers configured in opencode.json are merged: the runtime
+// list misses custom providers that only exist in the config file (xhz,
+// magpie, ...), and the config alone misses catalog metadata. Providers listed
+// in `disabled_providers` are skipped in both.
 async function syncModelCatalog(ctx: any): Promise<void> {
+  const disabled = new Set<string>(readDisabledProviders())
+  let models: ModelEntry[] = []
   try {
     const runtime = await fetchRuntimeModels(ctx)
     if (runtime) {
       const names = await providerNames(ctx)
-      const models = modelsFromRuntime(runtime, names)
-      if (models.length) {
-        writeModels(models, "runtime")
-        return
-      }
+      models = modelsFromRuntime(runtime, names)
     }
   } catch {
     // Fall through to the config file.
   }
+  const fromConfig = modelsFromConfig(disabled)
+  if (fromConfig.length) {
+    const seen = new Set(models.map((item) => item.id))
+    for (const item of fromConfig) {
+      if (seen.has(item.id)) continue
+      seen.add(item.id)
+      models.push(item)
+    }
+  }
+  models = models.filter((item) => !disabled.has(item.provider))
+  if (!models.length) return
+  writeModels(models, fromConfig.length ? "config" : "runtime")
+}
+
+function readDisabledProviders(): string[] {
+  try {
+    const config = JSON.parse(readFileSync(OPENCODE_CONFIG_PATH, "utf8"))
+    return Array.isArray(config?.disabled_providers)
+      ? config.disabled_providers.map((item: unknown) => String(item))
+      : []
+  } catch {
+    return []
+  }
+}
+
+function modelsFromConfig(disabled: Set<string>): ModelEntry[] {
+  const models: ModelEntry[] = []
   try {
     const catalog = JSON.parse(readFileSync(MODELS_SOURCE_PATH, "utf8"))
     const config = JSON.parse(readFileSync(OPENCODE_CONFIG_PATH, "utf8"))
-    const providers = Object.keys(config?.providers || {})
-    if (!providers.length) return
-    const models: ModelEntry[] = []
-    for (const provider of providers) {
+    const providers = config?.providers
+    if (!providers || typeof providers !== "object") return models
+    for (const provider of Object.keys(providers)) {
+      if (disabled.has(provider)) continue
       const entry = catalog?.[provider]
-      const configured = config?.providers?.[provider]?.models
+      const configured = providers?.[provider]?.models
       if (!configured || typeof configured !== "object") continue
       for (const key of Object.keys(configured)) {
         const meta = entry?.models?.[key] || configured[key] || {}
@@ -232,11 +259,10 @@ async function syncModelCatalog(ctx: any): Promise<void> {
         })
       }
     }
-    if (!models.length) return
-    writeModels(models, "config")
   } catch {
     // The panel simply shows no options when the catalog cannot be built.
   }
+  return models
 }
 
 async function fetchRuntimeModels(ctx: any): Promise<any[] | null> {

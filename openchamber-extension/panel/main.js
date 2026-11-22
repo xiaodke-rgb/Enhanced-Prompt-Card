@@ -2562,7 +2562,12 @@ ${GUEST_UI_LOOK_CSS}`;
     search.disabled = !modelCatalog.length;
     const list = el2("div", "model-list");
     panel.append(search, list);
-    picker.append(trigger, panel);
+    const refresh = el2("button", "model-refresh", "\u5237\u65B0");
+    refresh.type = "button";
+    refresh.title = "\u91CD\u65B0\u8BFB\u53D6\u6A21\u578B\u5217\u8868";
+    const triggerRow = el2("div", "model-trigger-row");
+    triggerRow.append(trigger, refresh);
+    picker.append(triggerRow, panel);
     addSlot.append(picker);
     const setOpen = (open) => {
       panel.hidden = !open;
@@ -2614,6 +2619,20 @@ ${GUEST_UI_LOOK_CSS}`;
       }
     };
     search.addEventListener("input", paintList);
+    const reloadCatalog = async () => {
+      refresh.disabled = true;
+      refresh.textContent = "\u5237\u65B0\u4E2D";
+      await loadModels();
+      refresh.disabled = false;
+      refresh.textContent = "\u5237\u65B0";
+      search.disabled = !modelCatalog.length;
+      search.placeholder = modelCatalog.length ? "\u641C\u7D22 provider/model\uFF0C\u70B9\u51FB\u6DFB\u52A0" : "\u6A21\u578B\u5217\u8868\u672A\u751F\u6210\uFF0C\u91CD\u542F OpenCode \u540E\u53EF\u7528";
+      paintList();
+    };
+    refresh.addEventListener("click", (event) => {
+      event.stopPropagation();
+      void reloadCatalog();
+    });
     paintList();
     rebuild();
   }
