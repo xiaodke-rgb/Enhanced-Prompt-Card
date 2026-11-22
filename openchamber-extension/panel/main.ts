@@ -692,7 +692,10 @@ function buildModelEditor(slot: HTMLElement, prompt: FirstPrompt): void {
       list.append(el('div', 'model-empty', modelCatalog.length ? '没有匹配的模型' : '模型列表未生成'));
       return;
     }
-    for (const item of matched.slice(0, 300)) {
+    // No row cap: the catalog is ~600 entries and the list is height-capped by
+    // CSS, so providers sorted late (magpie, xhz, ...) must still be reachable
+    // by scrolling instead of only through the search box.
+    for (const item of matched) {
       const picked = prompt.models.includes(item.id);
       const row = el('button', 'model-row');
       row.type = 'button';
@@ -710,9 +713,6 @@ function buildModelEditor(slot: HTMLElement, prompt: FirstPrompt): void {
         updatePreview();
       });
       list.append(row);
-    }
-    if (matched.length > 300) {
-      list.append(el('div', 'model-empty', `仅显示前 300 条，共 ${matched.length} 条，请输入关键字缩小范围`));
     }
   };
 

@@ -2598,7 +2598,7 @@ ${GUEST_UI_LOOK_CSS}`;
         list.append(el2("div", "model-empty", modelCatalog.length ? "\u6CA1\u6709\u5339\u914D\u7684\u6A21\u578B" : "\u6A21\u578B\u5217\u8868\u672A\u751F\u6210"));
         return;
       }
-      for (const item of matched.slice(0, 300)) {
+      for (const item of matched) {
         const picked = prompt.models.includes(item.id);
         const row = el2("button", "model-row");
         row.type = "button";
@@ -2613,9 +2613,6 @@ ${GUEST_UI_LOOK_CSS}`;
           updatePreview();
         });
         list.append(row);
-      }
-      if (matched.length > 300) {
-        list.append(el2("div", "model-empty", `\u4EC5\u663E\u793A\u524D 300 \u6761\uFF0C\u5171 ${matched.length} \u6761\uFF0C\u8BF7\u8F93\u5165\u5173\u952E\u5B57\u7F29\u5C0F\u8303\u56F4`));
       }
     };
     search.addEventListener("input", paintList);
